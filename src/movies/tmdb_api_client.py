@@ -1,5 +1,5 @@
 """
-Stage 1 of the pipeline: fetches the info of each movie from TMDB.
+Stage 1 of the movies pipeline: fetches the info of each movie from TMDB.
 """
 import os
 from queue import Queue
@@ -7,15 +7,15 @@ from queue import Queue
 import requests
 import tmdbsimple as tmdb
 
-from constants import LogColor, Step
-from movie import Movie
-from pipeline_stage import PipelineStage
-from tmdb_constants import GENRES, LANGUAGE_EN, LANGUAGE_ES, POSTER_BASE_URL
-from utils import PermanentError, with_retries
+from core.constants import LogColor, Step
+from core.pipeline_stage import PipelineStage
+from core.utils import PermanentError, with_retries
+from movies.movie import Movie
+from movies.tmdb_constants import GENRES, LANGUAGE_EN, LANGUAGE_ES, POSTER_BASE_URL
 
-class TmdbApiClient(PipelineStage):
+class MovieTmdbApiClient(PipelineStage):
     step = Step.TMDB
-    log_name = "TmdbApiClient"
+    log_name = "MovieTmdbApiClient"
     log_color = LogColor.LIGHT_GREEN
 
     def __init__(self, input_queue: Queue, output_queue: Queue):

@@ -4,8 +4,8 @@ Helpers shared by the stages: error and warning reporting, retries, formatting a
 import asyncio
 import time
 
-import shared_state
-from constants import FileStatus, LogColor, Step, MAX_ATTEMPTS, RETRY_DELAYS
+from core import shared_state
+from core.constants import FileStatus, LogColor, Step, MAX_ATTEMPTS, RETRY_DELAYS
 
 class PermanentError(Exception):
     """
@@ -92,24 +92,27 @@ def _print_table(title, rows, color):
         print(f"  {step.value:<{step_width}}  {file_name:<{file_width}}  {reason}")
     print(LogColor.END, end="")
 
-def print_summary():
+def print_summary(item_label):
+    """
+    Prints how many items were uploaded and the tables of errors and warnings. item_label: "movies"...
+    """
     with shared_state.mutex:
         errors = list(shared_state.errors)
         warnings = list(shared_state.warnings)
-        movies = list(shared_state.movies)
+        items = list(shared_state.items)
 
-    # Movies that did not finish without a recorded failure (should not happen)
+    # Items that did not finish without a recorded failure (should not happen)
     failed_files = {file_name for _, file_name, _ in errors}
-    for movie in movies:
-        if movie.status != FileStatus.UPLOADED and movie.file_name not in failed_files:
-            errors.append((Step.UNKNOWN, movie.file_name, f"Stopped with status {movie.status.name}"))
+    for item in items:
+        if item.status != FileStatus.UPLOADED and item.file_name not in failed_files:
+            errors.append((Step.UNKNOWN, item.file_name, f"Stopped with status {item.status.name}"))
 
-    uploaded = sum(1 for movie in movies if movie.status == FileStatus.UPLOADED)
-    # Files skipped while reading the folder never became movies, but they count in the total
-    total = len(movies) + sum(1 for step, _, _ in errors if step == Step.READ)
+    uploaded = sum(1 for item in items if item.status == FileStatus.UPLOADED)
+    # Files skipped while reading the folder never became items, but they count in the total
+    total = len(items) + sum(1 for step, _, _ in errors if step == Step.READ)
 
     print("\n================ SUMMARY ================")
-    print(f"Uploaded: {uploaded} of {total} movies")
+    print(f"Uploaded: {uploaded} of {total} {item_label}")
     if not errors and not warnings:
         print(f"{LogColor.LIGHT_GREEN}No errors{LogColor.END}")
         return

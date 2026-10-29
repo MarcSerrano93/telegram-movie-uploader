@@ -1,11 +1,13 @@
 """
-Reads the source folder, before the pipeline starts.
+Reads the movies source folder, before the pipeline starts.
 """
 import os
 
-from constants import MOVIE_FILE_EXTENSION, Step
-from movie import Movie
-from utils import report_failure
+from core.constants import Step
+from core.utils import report_failure
+from movies.movie import Movie
+
+MOVIE_FILE_EXTENSION = ".mkv"
 
 class FolderReader:
     def __init__(self, folder_path: str):

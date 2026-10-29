@@ -7,7 +7,8 @@ For each `.mkv` file in the source folder, the program:
 1. Reads the TMDB id from the file name.
 2. Fetches the movie info from TMDB (Spanish title, English title, year, genres, runtime, poster).
 3. Moves the file to its own folder inside the destination folder or, if it is bigger than
-   `telegram_size_limit_mb`, splits it there into a multi-part zip with 7-Zip.
+   `telegram_size_limit_mb`, splits it there into a multi-part zip (`.zip.001`, `.zip.002`...), the
+   same format as 7-Zip's split archives, opened with 7-Zip or WinRAR.
 4. Finds the movie's topic in the Telegram group, or creates it, posts the poster with a caption
    and uploads the file or parts.
 5. Once uploaded, moves the original of a split file next to its parts.
@@ -18,9 +19,7 @@ retried up to 3 times.
 
 ## Requirements
 
-- Windows (it runs `7z.exe` and the setup commands are for PowerShell)
-- Python 3.11+ (tested with 3.12)
-- `7z.exe` (7-Zip command line) in the project root
+- Python 3.11+ (tested with 3.12). The setup commands below are for Windows PowerShell
 - A Telegram account and API credentials from https://my.telegram.org
   (Telegram Premium is needed to upload files bigger than 2000 MB)
 - A Telegram supergroup with topics enabled, where your account can create topics
@@ -74,29 +73,34 @@ Copy `config.example.json` to `config.json` and fill it in:
 
 ```json
 {
-    "source_files_path": "E:/Movies/ToUpload/",
-    "destination_files_path": "E:/Movies/Uploaded/",
     "telegram_size_limit_mb": 4000,
-    "telegram_movie_group": "https://t.me/+yourGroupInviteLink"
+    "movies": {
+        "source_files_path": "E:/Movies/ToUpload/",
+        "destination_files_path": "E:/Movies/Uploaded/",
+        "telegram_group": "https://t.me/+yourGroupInviteLink"
+    }
 }
 ```
 
 | Field | Description |
 |---|---|
-| `source_files_path` | Folder with the `.mkv` files to upload |
-| `destination_files_path` | Folder where files are moved or split (must exist) |
 | `telegram_size_limit_mb` | Telegram upload limit of your account, in MB (4000 with Premium, 2000 without). Bigger files are split into parts of this size |
-| `telegram_movie_group` | Invite link or @username of the Telegram group (your account must be a member) |
+| `movies` | Settings of the movies mode |
+| `movies.source_files_path` | Folder with the `.mkv` files to upload |
+| `movies.destination_files_path` | Folder where files are moved or split (must exist) |
+| `movies.telegram_group` | Invite link or @username of the Telegram group (your account must be a member) |
+
+Only the section of the mode being run is checked.
 
 ## Usage
 
 With the virtual environment activated, from the project root:
 
 ```
-python src/main.py
+python src/main.py movies
 ```
 
-`config.json`, `.env`, `7z.exe` and `uploader.session` are always read from the project root, so the
+`config.json`, `.env` and `uploader.session` are always read from the project root, so the
 script also works when started from another folder. If something is missing or wrong in `config.json`
 or `.env`, it stops before doing anything and says what, e.g. `Invalid config file: API_KEY is missing in .env`.
 
@@ -136,7 +140,8 @@ Files uploaded on a resumed run arrive as a separate message, not inside the ori
 ## Running the tests
 
 The tests run offline: TMDB and Telegram are replaced by fakes, so no `.env`, `config.json` or account is
-needed. The test that splits with the real 7-Zip is skipped if `7z.exe` is not in the project root.
+needed. The test that opens the zip parts with the real 7-Zip is skipped if `7z.exe` is not in the
+project root.
 
 ```
 pip install -r requirements-dev.txt
@@ -147,18 +152,23 @@ pytest
 
 | File | Description |
 |---|---|
-| `src/main.py` | Entry point: loads the config and runs the pipeline stages |
-| `src/config.py` | Loads and validates `config.json` and `.env` |
-| `src/folder_reader.py` | Lists the `.mkv` files of the source folder |
-| `src/tmdb_api_client.py` | Stage 1: fetches the movie info from TMDB |
-| `src/tmdb_constants.py` | TMDB languages, poster URL and genre names |
-| `src/file_splitter.py` | Stage 2: moves or splits the file into the destination folder |
-| `src/telegram_api_client.py` | Stage 3: creates the topic and uploads the poster and files |
-| `src/pipeline_stage.py` | Base class of the stages, each one a thread connected by queues |
-| `src/movie.py` | Movie data and the Telegram caption |
-| `src/utils.py` | Retries, error/warning reporting and the final summary |
-| `src/constants.py` | Shared constants |
-| `src/shared_state.py` | Movies, errors and warnings shared by the stages, for the final summary |
+| `src/main.py` | Entry point: reads the mode, loads the config and runs the pipeline of the mode |
+| **`src/core/`** | **Shared by every mode** |
+| `config.py` | Loads and validates `config.json` and `.env` |
+| `pipeline_stage.py` | Base class of the stages, each one a thread connected by queues |
+| `telegram_api_client.py` | Base of the upload stage: connection, topics, file uploads in albums |
+| `zip_split.py` | Creates the multi-part zips |
+| `utils.py` | Retries, error/warning reporting and the final summary |
+| `constants.py` | Shared constants |
+| `shared_state.py` | Items, errors and warnings shared by the stages, for the final summary |
+| **`src/movies/`** | **Movies mode** |
+| `pipeline.py` | The stages of the mode: TMDB -> move or split -> upload |
+| `folder_reader.py` | Lists the `.mkv` files of the source folder |
+| `tmdb_api_client.py` | Stage 1: fetches the movie info from TMDB |
+| `tmdb_constants.py` | TMDB languages, poster URL and genre names |
+| `file_splitter.py` | Stage 2: moves or splits the file into the destination folder |
+| `telegram_api_client.py` | Stage 3: creates the topic and uploads the poster and files |
+| `movie.py` | Movie data and the Telegram caption |
 | `tests/` | Offline tests of every stage and of the whole pipeline (`pytest`) |
 
 ## License

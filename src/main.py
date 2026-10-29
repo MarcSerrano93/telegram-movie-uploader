@@ -1,47 +1,48 @@
 """
-Entry point: loads config.json and .env, reads the source folder and runs the three pipeline stages
-(TMDB -> split -> upload) in parallel threads, then prints the summary.
+Entry point: "python src/main.py <mode>". Loads config.json and .env, reads the source folder of the mode
+and runs its pipeline stages in parallel threads, then prints the summary.
 """
+import argparse
 import os
 from queue import Queue
 
 from dotenv import load_dotenv
 
-import shared_state
-from config import Config, ConfigError
-from constants import PROJECT_ROOT
-from file_splitter import FileSplitter
-from folder_reader import FolderReader
-from telegram_api_client import TelegramApiClient
-from tmdb_api_client import TmdbApiClient
-from utils import print_summary
+import movies.pipeline
+from core import shared_state
+from core.config import Config, ConfigError, MODES
+from core.constants import PROJECT_ROOT
+from core.utils import print_summary
+
+PIPELINES = {"movies": movies.pipeline}
 
 def main():
+    parser = argparse.ArgumentParser(description="Uploads media to a Telegram forum group, one topic per item.")
+    parser.add_argument("mode", choices=MODES, help="what to upload")
+    mode = parser.parse_args().mode
+
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
     try:
-        config = Config()
+        config = Config(mode)
     except ConfigError as e:
         print(f"Invalid config file: {e}")
         return
-    shared_state.movies.extend(FolderReader(config.source_files_path).read())
+    pipeline = PIPELINES[mode]
+    shared_state.items.extend(pipeline.read_items(config))
 
-    # Each stage passes the movies it processed successfully to the next one through a queue
-    tmdb_queue, split_queue, upload_queue = Queue(), Queue(), Queue()
-    for movie in shared_state.movies:
-        tmdb_queue.put(movie)
-    tmdb_queue.put(None)    # End of the list
+    # Each stage passes the items it processed successfully to the next one through a queue
+    input_queue = Queue()
+    stages = pipeline.create_stages(config, input_queue)
+    for item in shared_state.items:
+        input_queue.put(item)
+    input_queue.put(None)   # End of the list
 
-    stages = [
-        TmdbApiClient(tmdb_queue, split_queue),
-        FileSplitter(split_queue, upload_queue, config.destination_files_path, config.telegram_size_limit_mb),
-        TelegramApiClient(upload_queue, config.telegram_movie_group),
-    ]
     for stage in stages:
         stage.start()
     for stage in stages:
         stage.join()
 
-    print_summary()
+    print_summary(pipeline.ITEM_LABEL)
 
 if __name__ == "__main__":
     main()

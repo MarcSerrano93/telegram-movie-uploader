@@ -4,9 +4,7 @@ Constants and enums shared by the whole project.
 import os
 from enum import Enum
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-MOVIE_FILE_EXTENSION = ".mkv"
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Retries for operations that can fail temporarily (network, OS, Telegram...)
 MAX_ATTEMPTS = 3

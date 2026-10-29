@@ -1,5 +1,5 @@
 from conftest import error_reasons
-from folder_reader import FolderReader
+from movies.folder_reader import FolderReader
 
 def test_reads_tagged_mkv_files(tmp_path):
     for name in ["A (2024) {tmdb-1}.mkv", "B (2024) {tmdb-2}.MKV", "C (2024) {tmdb-3}.mp4", "D {tmdb-4}.mkv.txt"]:

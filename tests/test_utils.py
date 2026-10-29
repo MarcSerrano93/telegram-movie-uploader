@@ -2,11 +2,11 @@ import asyncio
 
 import pytest
 
-import shared_state
-from constants import FileStatus, Step
-from movie import Movie
-from utils import (PermanentError, format_duration, format_size, print_summary, report_failure, report_warning,
-                   with_retries, with_retries_async)
+from core import shared_state
+from core.constants import FileStatus, Step
+from core.utils import (PermanentError, format_duration, format_size, print_summary, report_failure, report_warning,
+                        with_retries, with_retries_async)
+from movies.movie import Movie
 
 class FloodWait(Exception):
     """
@@ -92,11 +92,11 @@ def test_format_duration(seconds, expected):
 def add_movie(file_name, status):
     movie = Movie(file_name)
     movie.status = status
-    shared_state.movies.append(movie)
+    shared_state.items.append(movie)
 
 def test_summary_without_errors(capsys):
     add_movie("a {tmdb-1}.mkv", FileStatus.UPLOADED)
-    print_summary()
+    print_summary("movies")
     output = capsys.readouterr().out
     assert "Uploaded: 1 of 1 movies" in output
     assert "No errors" in output
@@ -110,7 +110,7 @@ def test_summary_with_errors_and_warnings(capsys):
     report_warning(Step.UPLOAD, "uploaded {tmdb-1}.mkv", "No poster in TMDB")
     capsys.readouterr()
 
-    print_summary()
+    print_summary("movies")
     output = capsys.readouterr().out
     # 3 movies + the file skipped while reading the folder
     assert "Uploaded: 1 of 4 movies" in output

@@ -1,5 +1,6 @@
 """
-Upload logic with a fake Telegram client: no network and no account needed.
+Movie upload logic (and the shared Telegram code under it) with a fake Telegram client:
+no network and no account needed.
 """
 import asyncio
 import os
@@ -10,10 +11,10 @@ import pytest
 from telethon.errors import ForbiddenError
 from telethon.tl.functions.messages import CreateForumTopicRequest, GetForumTopicsRequest
 
-import shared_state
-import telegram_api_client
-from constants import FileStatus
-from telegram_api_client import TelegramApiClient, TOPIC_TITLE_MAX_LENGTH
+from core import shared_state, telegram_api_client
+from core.constants import FileStatus
+from core.telegram_api_client import TOPIC_TITLE_MAX_LENGTH
+from movies.telegram_api_client import MovieTelegramApiClient
 
 class FakeTopic:
     def __init__(self, topic_id, title):
@@ -109,8 +110,8 @@ def part_names(count, start=1):
     return [f"Película (2024).zip.{part:03d}" for part in range(start, count + 1)]
 
 def upload(telegram, movie):
-    uploader = TelegramApiClient(Queue(), "group")
-    asyncio.run(uploader._upload_movie(telegram, "group", movie))
+    uploader = MovieTelegramApiClient(Queue(), "group")
+    asyncio.run(uploader._upload_item(telegram, "group", movie))
 
 def test_new_movie_creates_topic_poster_and_one_album(telegram, split_movie):
     movie = split_movie(parts=3)

@@ -4,7 +4,7 @@ A movie file with its TMDB info and its status in the pipeline.
 import os
 import re
 
-from constants import FileStatus
+from core.constants import FileStatus
 
 TMDB_ID_REGEX = re.compile(r"\{tmdb-(\d+)\}")
 CAPTION_MAX_GENRES = 5

@@ -1,49 +1,22 @@
 import os
-import subprocess
+import zipfile
+from pathlib import Path
 from queue import Queue
 
 import pytest
 
-import file_splitter
 from conftest import error_reasons
-from constants import FileStatus, PROJECT_ROOT
-from file_splitter import FileSplitter
+from core.constants import FileStatus
+from movies import file_splitter
+from movies.file_splitter import FileSplitter
 
 MB = 1024 * 1024
-REAL_SEVEN_ZIP = os.path.join(PROJECT_ROOT, "7z.exe")
 
 @pytest.fixture
 def destination(tmp_path):
     path = tmp_path / "destination"
     path.mkdir()
     return path
-
-@pytest.fixture
-def fake_seven_zip(tmp_path, monkeypatch):
-    """
-    Replaces 7z with a fake one. Set fake.exit_codes to make the first calls fail; it creates 2 parts when it works.
-    """
-    seven_zip = tmp_path / "7z.exe"
-    seven_zip.write_bytes(b"")
-    monkeypatch.setattr(file_splitter, "SEVEN_ZIP_PATH", str(seven_zip))
-
-    class FakeSevenZip:
-        exit_codes = []
-        calls = []
-        def run(self, command, **kwargs):
-            self.calls.append(command)
-            if self.exit_codes:
-                error = "\r\nERROR: The system cannot find the file specified.\r\nC:\\movie.mkv\r\n"
-                return subprocess.CompletedProcess(command, self.exit_codes.pop(0), stderr=error)
-            archive_path = command[-2]
-            for part in (1, 2):
-                with open(f"{archive_path}.{part:03d}", "wb") as f:
-                    f.write(b"part")
-            return subprocess.CompletedProcess(command, 0)
-
-    fake = FakeSevenZip()
-    monkeypatch.setattr(file_splitter.subprocess, "run", fake.run)
-    return fake
 
 def run_splitter(movies, destination, limit_mb=1):
     """
@@ -59,6 +32,17 @@ def run_splitter(movies, destination, limit_mb=1):
     assert not splitter.is_alive()
     return list(iter(output_queue.get, None))
 
+def failing_split(errors):
+    """
+    Returns a create_split_zip that raises the given errors one per call, then splits for real.
+    """
+    real_split = file_splitter.create_split_zip
+    def split(*args):
+        if errors:
+            raise errors.pop(0)
+        return real_split(*args)
+    return split
+
 def test_small_file_is_moved(make_movie, destination):
     movie = make_movie("Small (2024) {tmdb-1}.mkv", size=1000)
 
@@ -70,57 +54,72 @@ def test_small_file_is_moved(make_movie, destination):
     assert movie.destination_path == str(folder)
     assert movie.status == FileStatus.SPLIT
 
-def test_file_of_exactly_the_limit_is_moved(make_movie, destination, fake_seven_zip):
-    movie = make_movie(size=MB)
-    run_splitter([movie], destination)
-    assert fake_seven_zip.calls == []
+def test_file_of_exactly_the_limit_is_moved(make_movie, destination):
+    movie = make_movie("Movie (2024) {tmdb-1}.mkv", size=MB)
 
-def test_big_file_is_split_and_original_kept(make_movie, destination, fake_seven_zip):
-    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1, title="Big: Movie?")
+    run_splitter([movie], destination)
+
+    assert os.listdir(destination / "Movie (2024) {tmdb-1}") == ["Movie (2024) {tmdb-1}.mkv"]
+
+def test_big_file_is_split_and_original_kept(make_movie, destination):
+    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=2 * MB + MB // 2, title="Big: Movie?")
 
     assert run_splitter([movie], destination, limit_mb=1) == [movie]
 
-    command = fake_seven_zip.calls[0]
-    assert command[:7] == [file_splitter.SEVEN_ZIP_PATH, "a", "-tzip", "-mx0", "-bso0", "-bsp0", "-v1m"]
     folder = destination / "Big (2024) {tmdb-1}"
     # Characters not allowed in file names are replaced
-    assert sorted(os.listdir(folder)) == ["Big. Movie. (2024).zip.001", "Big. Movie. (2024).zip.002"]
+    parts = sorted(os.listdir(folder))
+    assert parts == ["Big. Movie. (2024).zip.001", "Big. Movie. (2024).zip.002", "Big. Movie. (2024).zip.003"]
+    assert all(os.path.getsize(folder / part) <= MB for part in parts)
     assert os.path.exists(movie.file_full_path)
     assert not os.path.exists(f"{folder}.partial")
+    assert movie.status == FileStatus.SPLIT
 
-def test_already_split_file_is_not_split_again(make_movie, destination, fake_seven_zip):
+def test_parts_contain_the_movie(make_movie, destination, tmp_path):
+    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1, title="Big")
+    run_splitter([movie], destination)
+
+    folder = destination / "Big (2024) {tmdb-1}"
+    joined = tmp_path / "joined.zip"
+    with open(joined, "wb") as f:
+        for part in sorted(os.listdir(folder)):
+            f.write((folder / part).read_bytes())
+    with zipfile.ZipFile(joined) as archive:
+        assert archive.read("Big (2024) {tmdb-1}.mkv") == Path(movie.file_full_path).read_bytes()
+
+def test_split_logs_start_and_end(make_movie, destination, capsys):
+    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
+
+    run_splitter([movie], destination)
+
+    output = capsys.readouterr().out
+    assert "Splitting \"Big (2024) {tmdb-1}.mkv\" (1.0 MB)..." in output
+    assert "\"Big (2024) {tmdb-1}.mkv\" split into 2 parts in 0m 0s" in output
+
+def test_already_split_file_is_not_split_again(make_movie, destination, monkeypatch):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
     (destination / "Big (2024) {tmdb-1}").mkdir()
+    monkeypatch.setattr(file_splitter, "create_split_zip", failing_split([AssertionError("split again")]))
 
     assert run_splitter([movie], destination) == [movie]
-    assert fake_seven_zip.calls == []
+    assert error_reasons() == []
 
-def test_failed_split_is_retried(make_movie, destination, fake_seven_zip):
+def test_failed_split_is_retried(make_movie, destination, monkeypatch):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
-    fake_seven_zip.exit_codes = [2]
+    monkeypatch.setattr(file_splitter, "create_split_zip", failing_split([OSError("Disk busy")]))
 
     assert run_splitter([movie], destination) == [movie]
-    assert len(fake_seven_zip.calls) == 2
     assert len(os.listdir(destination / "Big (2024) {tmdb-1}")) == 2
 
-def test_split_failing_3_times_is_reported(make_movie, destination, fake_seven_zip):
+def test_split_failing_3_times_is_reported(make_movie, destination, monkeypatch):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
-    fake_seven_zip.exit_codes = [2, 2, 2]
+    monkeypatch.setattr(file_splitter, "create_split_zip", failing_split([OSError("No space left on device")] * 3))
 
     assert run_splitter([movie], destination) == []
-    # Only the first line of 7z's error output, so the summary stays on one line
-    expected = "7z failed (exit code 2): ERROR: The system cannot find the file specified. (failed after 3 attempts)"
-    assert error_reasons() == [("SPLIT", movie.file_name, expected)]
+    assert error_reasons() == [("SPLIT", movie.file_name, "No space left on device (failed after 3 attempts)")]
     # Only the temporary folder is left, so the next run splits it again
     assert not os.path.exists(destination / "Big (2024) {tmdb-1}")
     assert movie.status == FileStatus.ERROR
-
-def test_missing_7z_is_reported(make_movie, destination, monkeypatch, tmp_path):
-    monkeypatch.setattr(file_splitter, "SEVEN_ZIP_PATH", str(tmp_path / "missing" / "7z.exe"))
-    movie = make_movie(size=MB + 1)
-
-    assert run_splitter([movie], destination) == []
-    assert error_reasons()[0][2].startswith("7z.exe not found")
 
 def test_missing_source_file_is_reported(make_movie, destination):
     movie = make_movie()
@@ -135,46 +134,3 @@ def test_one_failure_does_not_stop_the_others(make_movie, destination):
     good = make_movie("Good (2024) {tmdb-2}.mkv")
 
     assert run_splitter([missing, good], destination) == [good]
-
-def test_split_logs_start_and_end(make_movie, destination, fake_seven_zip, capsys):
-    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
-
-    run_splitter([movie], destination)
-
-    output = capsys.readouterr().out
-    assert "Splitting \"Big (2024) {tmdb-1}.mkv\" (1.0 MB)..." in output
-    assert "\"Big (2024) {tmdb-1}.mkv\" split into 2 parts in 0m 0s" in output
-
-@pytest.mark.skipif(not os.path.isfile(REAL_SEVEN_ZIP), reason="7z.exe not in the project root")
-def test_split_with_real_7z(make_movie, destination, capfd):
-    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=2 * MB + MB // 2, title="Big")
-
-    assert run_splitter([movie], destination, limit_mb=1) == [movie]
-
-    parts = sorted(os.listdir(destination / "Big (2024) {tmdb-1}"))
-    assert parts == ["Big (2024).zip.001", "Big (2024).zip.002", "Big (2024).zip.003"]
-    assert all(os.path.getsize(destination / "Big (2024) {tmdb-1}" / part) <= MB for part in parts)
-    # 7z itself prints nothing, only our own log lines
-    output = capfd.readouterr().out
-    assert all(line.startswith("\033[95m[FileSplitter]") for line in output.splitlines() if line.strip())
-
-@pytest.mark.skipif(not os.path.isfile(REAL_SEVEN_ZIP), reason="7z.exe not in the project root")
-def test_real_7z_error_is_in_the_message(make_movie, destination, monkeypatch):
-    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
-    # Locked file: 7z cannot read it, like a movie still being copied
-    real_run = subprocess.run
-    def run_with_locked_file(command, **kwargs):
-        with open(movie.file_full_path, "r+b") as f:
-            import msvcrt
-            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, os.path.getsize(movie.file_full_path))
-            try:
-                return real_run(command, **kwargs)
-            finally:
-                f.seek(0)
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, os.path.getsize(movie.file_full_path))
-    monkeypatch.setattr(file_splitter.subprocess, "run", run_with_locked_file)
-
-    assert run_splitter([movie], destination) == []
-    reason = error_reasons()[0][2]
-    assert reason.startswith("7z failed (exit code ")
-    assert "): " in reason

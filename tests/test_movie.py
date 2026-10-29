@@ -1,6 +1,6 @@
 import pytest
 
-from movie import Movie
+from movies.movie import Movie
 
 @pytest.mark.parametrize("text, expected", [
     ("Movie (2024) {tmdb-112233}.mkv", "112233"),
@@ -46,6 +46,6 @@ def test_caption_shows_up_to_5_genres():
     assert "#f" not in caption
 
 def test_caption_starts_like_telegram_client_expects():
-    # TelegramApiClient detects an already sent text poster by this start
-    from telegram_api_client import POSTER_CAPTION_START
+    # MovieTelegramApiClient detects an already sent text poster by this start
+    from movies.telegram_api_client import POSTER_CAPTION_START
     assert make_caption("Matrix", "The Matrix").startswith(POSTER_CAPTION_START)

@@ -5,9 +5,8 @@ import os
 
 import pytest
 
-import shared_state
-import utils
-from movie import Movie
+from core import shared_state, utils
+from movies.movie import Movie
 
 @pytest.fixture(autouse=True)
 def no_retry_delays(monkeypatch):
@@ -17,8 +16,8 @@ def no_retry_delays(monkeypatch):
 @pytest.fixture(autouse=True)
 def clean_shared_state():
     yield
-    for items in (shared_state.movies, shared_state.errors, shared_state.warnings):
-        items.clear()
+    for values in (shared_state.items, shared_state.errors, shared_state.warnings):
+        values.clear()
 
 @pytest.fixture
 def make_movie(tmp_path):
