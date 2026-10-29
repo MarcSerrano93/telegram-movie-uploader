@@ -160,3 +160,7 @@ pytest
 | `src/constants.py` | Shared constants |
 | `src/shared_state.py` | Movies, errors and warnings shared by the stages, for the final summary |
 | `tests/` | Offline tests of every stage and of the whole pipeline (`pytest`) |
+
+## License
+
+[MIT](LICENSE): free to use, modify and share.
