@@ -1,0 +1,16 @@
+# Secrets
+.env
+config.json
+*.session
+*.session-journal
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local tools and files
+.vscode/
+7z.exe
+CLAUDE.local.md

@@ -1,0 +1,12 @@
+certifi==2026.10.23
+charset-normalizer==3.5.2
+cryptg==0.6.0
+idna==3.20
+pyaes==1.6.1
+pyasn1==0.6.4
+python-dotenv==1.2.4
+requests==2.34.2
+rsa==4.9.1
+Telethon==1.45.0
+tmdbsimple==2.9.8
+urllib3==2.8.0

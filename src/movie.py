@@ -1,0 +1,71 @@
+"""
+A movie file with its TMDB info and its status in the pipeline.
+"""
+import os
+import re
+
+from constants import FileStatus
+
+TMDB_ID_REGEX = re.compile(r"\{tmdb-(\d+)\}")
+CAPTION_MAX_GENRES = 5
+
+class Movie:
+    def __init__(self, file_full_path):
+        self.file_full_path = file_full_path
+        self.file_name = os.path.basename(file_full_path)
+        self.destination_path = ""
+        self.title = ""
+        self.title_en = ""
+        self.year = ""
+        self.tmdb_id = self.get_tmdb_id_from_path()
+        self.genres = []
+        self.duration = 0
+        self.poster_path = ""
+        self.status = FileStatus.NONE
+
+    @staticmethod
+    def parse_tmdb_id(text):
+        """
+        Returns the id of the {tmdb-<id>} tag in text (file name, topic title...), or None if there is no tag.
+        """
+        match = TMDB_ID_REGEX.search(text)
+        return match.group(1) if match else None
+
+    def get_tmdb_id_from_path(self):
+        # File names look like "Movie (2024) {tmdb-112233}.mkv"
+        return Movie.parse_tmdb_id(self.file_name)
+
+    def set_movie_metadata(self, title, title_en, year, genres, duration_min, poster_path):
+        self.title = title
+        self.title_en = title_en
+        self.year = year
+        self.genres = genres
+        self.duration = duration_min
+        self.poster_path = poster_path
+        self.status = FileStatus.PARSED
+
+    def generate_telegram_poster_caption(self):
+        """
+        Returns the text of the poster message: titles, year, runtime, up to 5 genres as hashtags and the TMDB link.
+        If the Spanish title already contains "(English title)", it is removed so it is not shown twice.
+        """
+        regex = r"\(\s*" + re.escape(self.title_en) + r"\s*\)"
+        title_es = re.sub(regex, "", self.title).rstrip()
+        title = f"🎬| **{title_es}** __({self.title_en})__"
+        year = f"📆| {self.year}"
+        hours, minutes = divmod(self.duration, 60)
+        duration = f"⏱| {hours}h {minutes}m"
+        tmdb_link = f"🌐 | [TMDB](https://www.themoviedb.org/movie/{self.tmdb_id})"
+        genres = "".join(f"\n🎭| #{genre}" for genre in self.genres[:CAPTION_MAX_GENRES])
+        return f"{title}\n\n{year}\n{duration}{genres}\n\n{tmdb_link}"
+
+    def __repr__(self):
+        return (
+            f"Movie(\n"
+            f"    id={self.tmdb_id},\n"
+            f"    name='{self.title}',\n"
+            f"    year='{self.year}',\n"
+            f"    poster_path='{self.poster_path}',\n"
+            f"    genres='{self.genres}',\n"
+            f")"
+        )
