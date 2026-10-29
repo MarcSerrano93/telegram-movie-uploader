@@ -18,6 +18,7 @@ TELEGRAM_GROUP = "telegram_group"
 # Keys of the section of each mode. Only the section of the mode being run is checked
 MODE_KEYS = {
     "movies": (SOURCE_FILES_PATH, DESTINATION_FILES_PATH, TELEGRAM_GROUP),
+    "tv": (SOURCE_FILES_PATH, TELEGRAM_GROUP),
 }
 MODES = tuple(MODE_KEYS)
 
@@ -58,8 +59,9 @@ class Config:
         return config[key]
 
     def _get_section(self, config, mode):
+        # Before the modes, the movie keys were at the top level
         if mode not in config and SOURCE_FILES_PATH in config:
-            raise ConfigError(f"config.json has the old format: move the movie keys into a \"{mode}\" section, see config.example.json")
+            raise ConfigError("config.json has the old format: move the movie keys into a \"movies\" section, see config.example.json")
         section = self._get(config, mode)
         if not isinstance(section, dict):
             raise ConfigError(f"\"{mode}\" must be a JSON object")

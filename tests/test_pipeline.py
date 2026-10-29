@@ -5,12 +5,12 @@ from queue import Queue
 from types import SimpleNamespace
 
 import requests
-import tmdbsimple
 
 import movies.pipeline
-from core import shared_state
+from core import shared_state, tmdb
 from core.constants import FileStatus, Step
 from core.pipeline_stage import PipelineStage
+from conftest import fake_response
 from core.utils import print_summary
 
 class FakeUpload(PipelineStage):
@@ -31,16 +31,15 @@ def fake_tmdb(monkeypatch):
     Movie 404 does not exist, 99 never answers and 7 fails twice before answering.
     """
     calls = {}
-    def info(tmdb_movie, language=None):
-        calls[tmdb_movie.id] = calls.get(tmdb_movie.id, 0) + 1
-        if tmdb_movie.id == "404":
-            response = requests.Response()
-            response.status_code = 404
-            raise requests.HTTPError("404 Client Error", response=response)
-        if tmdb_movie.id == "99" or (tmdb_movie.id == "7" and calls[tmdb_movie.id] <= 2):
+    def get(url, params, timeout):
+        movie_id = url.rsplit("/", 1)[1]
+        calls[movie_id] = calls.get(movie_id, 0) + 1
+        if movie_id == "99" or (movie_id == "7" and calls[movie_id] <= 2):
             raise requests.ConnectionError("Connection aborted")
-        return {"title": f"Película {tmdb_movie.id}", "release_date": "2024-01-01", "genres": [{"id": 28}], "runtime": 100}
-    monkeypatch.setattr(tmdbsimple.Movies, "info", info)
+        if movie_id == "404":
+            return fake_response(404)
+        return fake_response(200, {"title": f"Película {movie_id}", "release_date": "2024-01-01", "genres": [{"id": 28}], "runtime": 100})
+    monkeypatch.setattr(tmdb.requests, "get", get)
 
 def test_movies_pipeline(tmp_path, monkeypatch, capsys):
     fake_tmdb(monkeypatch)

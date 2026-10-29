@@ -5,8 +5,8 @@ import os
 import re
 
 from core.constants import FileStatus
+from core.tmdb import parse_tmdb_id
 
-TMDB_ID_REGEX = re.compile(r"\{tmdb-(\d+)\}")
 CAPTION_MAX_GENRES = 5
 
 class Movie:
@@ -23,17 +23,9 @@ class Movie:
         self.poster_path = ""
         self.status = FileStatus.NONE
 
-    @staticmethod
-    def parse_tmdb_id(text):
-        """
-        Returns the id of the {tmdb-<id>} tag in text (file name, topic title...), or None if there is no tag.
-        """
-        match = TMDB_ID_REGEX.search(text)
-        return match.group(1) if match else None
-
     def get_tmdb_id_from_path(self):
         # File names look like "Movie (2024) {tmdb-112233}.mkv"
-        return Movie.parse_tmdb_id(self.file_name)
+        return parse_tmdb_id(self.file_name)
 
     def set_movie_metadata(self, title, title_en, year, genres, duration_min, poster_path):
         self.title = title

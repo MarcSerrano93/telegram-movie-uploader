@@ -9,12 +9,13 @@ from queue import Queue
 from dotenv import load_dotenv
 
 import movies.pipeline
+import tv.pipeline
 from core import shared_state
 from core.config import Config, ConfigError, MODES
 from core.constants import PROJECT_ROOT
 from core.utils import print_summary
 
-PIPELINES = {"movies": movies.pipeline}
+PIPELINES = {"movies": movies.pipeline, "tv": tv.pipeline}
 
 def main():
     parser = argparse.ArgumentParser(description="Uploads media to a Telegram forum group, one topic per item.")

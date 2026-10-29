@@ -1,16 +1,4 @@
-import pytest
-
 from movies.movie import Movie
-
-@pytest.mark.parametrize("text, expected", [
-    ("Movie (2024) {tmdb-112233}.mkv", "112233"),
-    ("Movie {tmdb-7} extra.mkv", "7"),
-    ("Movie (2024).mkv", None),
-    ("Movie {tmdb-abc}.mkv", None),
-    ("Movie {tmdb 1}.mkv", None),
-])
-def test_parse_tmdb_id(text, expected):
-    assert Movie.parse_tmdb_id(text) == expected
 
 def test_movie_reads_id_from_file_name_not_folder():
     movie = Movie("C:/Movies {tmdb-999}/Movie (2024) {tmdb-5}.mkv")

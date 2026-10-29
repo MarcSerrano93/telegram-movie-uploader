@@ -1,11 +1,17 @@
 """
 Shared fixtures. pytest.ini adds src/ to the import path.
 """
+import json
 import os
+from types import SimpleNamespace
 
 import pytest
+import requests
+from telethon.errors import WebpageMediaEmptyError
+from telethon.extensions import markdown
+from telethon.tl.functions.messages import CreateForumTopicRequest, GetForumTopicsRequest
 
-from core import shared_state, utils
+from core import shared_state, telegram_api_client, utils
 from movies.movie import Movie
 
 @pytest.fixture(autouse=True)
@@ -39,3 +45,101 @@ def error_reasons():
     Returns the (step value, file name, reason) of every reported error, as strings.
     """
     return [(step.value, file_name, str(reason)) for step, file_name, reason in shared_state.errors]
+
+class FakeTopic:
+    def __init__(self, topic_id, title):
+        self.id = topic_id
+        self.title = title
+        self.messages = []
+
+class FakeUpdate:
+    def __init__(self, message_id):
+        self.message = SimpleNamespace(id=message_id)
+
+class FakeTelegram:
+    """
+    Keeps the topics and messages of one group in memory, with the client methods the uploaders use.
+    """
+    def __init__(self):
+        self.topics = {}
+        self.general = []           # Messages of the General topic
+        self.uploaded_files = []    # Names, in upload order
+        self.sent_albums = []       # Names of the files of each send_file call with files
+        self.lost_album_responses = 0   # Next albums that are sent, but whose response is lost
+        self.request_errors = []        # Raised by the next topic requests
+        self.request_count = 0
+        self.broken_image_urls = set()  # Image URLs that Telegram cannot download
+
+    def add_topic(self, title):
+        topic = FakeTopic(len(self.topics) + 100, title)
+        self.topics[topic.id] = topic
+        return topic
+
+    async def __call__(self, request):
+        self.request_count += 1
+        if self.request_errors:
+            raise self.request_errors.pop(0)
+        if isinstance(request, GetForumTopicsRequest):
+            # Like Telegram's search, it may also return topics that only look similar
+            return SimpleNamespace(topics=list(self.topics.values()))
+        if isinstance(request, CreateForumTopicRequest):
+            topic = self.add_topic(request.title)
+            return SimpleNamespace(updates=[FakeUpdate(topic.id)])
+        raise NotImplementedError(request)
+
+    async def iter_messages(self, entity, reply_to):
+        for message in list(self.topics[reply_to].messages):
+            yield message
+
+    async def send_message(self, entity, message, reply_to):
+        self.topics[reply_to].messages.append(self.text_message(message))
+
+    async def send_file(self, entity, file, reply_to=None, caption=None, force_document=False):
+        messages = self.topics[reply_to].messages if reply_to else self.general
+        if isinstance(file, str):   # Image: TMDB URL or local file
+            if file in self.broken_image_urls:
+                raise WebpageMediaEmptyError(request=None)
+            messages.append(self.photo_message(caption, file))
+        else:
+            files = file if isinstance(file, list) else [file]
+            self.sent_albums.append([uploaded.name for uploaded in files])
+            for uploaded in files:
+                messages.append(self.file_message(uploaded.name))
+            if self.lost_album_responses:
+                self.lost_album_responses -= 1
+                raise ConnectionError("Response lost")
+
+    def text_message(self, text):
+        return SimpleNamespace(photo=None, message=markdown.parse(text)[0], file=None)
+
+    def photo_message(self, caption, image="image.jpg"):
+        # Like Telegram, the text keeps no markdown: "**Bold**" arrives as "Bold"
+        return SimpleNamespace(photo=True, message=markdown.parse(caption or "")[0], file=None, image=image, caption=caption)
+
+    def file_message(self, name):
+        return SimpleNamespace(photo=None, message="", file=SimpleNamespace(name=name))
+
+@pytest.fixture
+def telegram(monkeypatch):
+    fake = FakeTelegram()
+    async def fake_upload_file(client, file, file_name, progress_callback):
+        size = os.fstat(file.fileno()).st_size
+        progress_callback(size, size)
+        fake.uploaded_files.append(file_name)
+        return SimpleNamespace(name=file_name)
+    monkeypatch.setattr(telegram_api_client, "upload_file", fake_upload_file)
+    monkeypatch.setattr(telegram_api_client, "ForumTopic", FakeTopic)
+    monkeypatch.setattr(telegram_api_client, "UpdateNewChannelMessage", FakeUpdate)
+    return fake
+
+def warning_reasons():
+    return [(step.value, file_name, str(reason)) for step, file_name, reason in shared_state.warnings]
+
+def fake_response(status_code, content=None):
+    """
+    Returns a requests.Response with the given status code and JSON content, like the ones TMDB returns.
+    """
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = json.dumps(content or {}).encode()
+    return response

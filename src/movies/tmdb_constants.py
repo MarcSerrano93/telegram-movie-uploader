@@ -1,9 +1,6 @@
 """
-TMDB request languages, poster URL and the Spanish genre names used as hashtags in Telegram.
+Spanish names of the TMDB movie genres, used as hashtags in Telegram.
 """
-LANGUAGE_ES = "es-ES"
-LANGUAGE_EN = "en-US"
-POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500"
 GENRES = {
     28: "Acción",
     12: "Aventura",

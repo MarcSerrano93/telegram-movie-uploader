@@ -3,6 +3,10 @@
     "movies": {
         "source_files_path": "E:/Movies/ToUpload/",
         "destination_files_path": "E:/Movies/Uploaded/",
-        "telegram_group": "https://t.me/+yourGroupInviteLink"
+        "telegram_group": "https://t.me/+yourMoviesGroupInviteLink"
+    },
+    "tv": {
+        "source_files_path": "E:/TV/ToUpload/",
+        "telegram_group": "https://t.me/+yourTvGroupInviteLink"
     }
 }

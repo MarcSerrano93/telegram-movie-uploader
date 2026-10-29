@@ -1,5 +1,5 @@
 """
-Movie upload logic (and the shared Telegram code under it) with a fake Telegram client:
+Movie upload logic (and the shared Telegram code under it) with the fake Telegram client of conftest.py:
 no network and no account needed.
 """
 import asyncio
@@ -9,87 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 from telethon.errors import ForbiddenError
-from telethon.tl.functions.messages import CreateForumTopicRequest, GetForumTopicsRequest
 
-from core import shared_state, telegram_api_client
+from core import shared_state
 from core.constants import FileStatus
 from core.telegram_api_client import TOPIC_TITLE_MAX_LENGTH
 from movies.telegram_api_client import MovieTelegramApiClient
-
-class FakeTopic:
-    def __init__(self, topic_id, title):
-        self.id = topic_id
-        self.title = title
-        self.messages = []
-
-class FakeUpdate:
-    def __init__(self, message_id):
-        self.message = SimpleNamespace(id=message_id)
-
-class FakeTelegram:
-    """
-    Keeps the topics and messages of one group in memory, with the client methods the uploader uses.
-    """
-    def __init__(self):
-        self.topics = {}
-        self.uploaded_files = []    # Names, in upload order
-        self.sent_albums = []       # Names of the files of each send_file call with files
-        self.lost_album_responses = 0   # Next albums that are sent, but whose response is lost
-        self.request_errors = []        # Raised by the next topic requests
-        self.request_count = 0
-
-    def add_topic(self, title):
-        topic = FakeTopic(len(self.topics) + 100, title)
-        self.topics[topic.id] = topic
-        return topic
-
-    async def __call__(self, request):
-        self.request_count += 1
-        if self.request_errors:
-            raise self.request_errors.pop(0)
-        if isinstance(request, GetForumTopicsRequest):
-            # Like Telegram's search, it may also return topics that only look similar
-            return SimpleNamespace(topics=list(self.topics.values()))
-        if isinstance(request, CreateForumTopicRequest):
-            topic = self.add_topic(request.title)
-            return SimpleNamespace(updates=[FakeUpdate(topic.id)])
-        raise NotImplementedError(request)
-
-    async def iter_messages(self, entity, reply_to):
-        for message in list(self.topics[reply_to].messages):
-            yield message
-
-    async def send_message(self, entity, message, reply_to):
-        self.topics[reply_to].messages.append(SimpleNamespace(photo=None, message=message, file=None))
-
-    async def send_file(self, entity, file, reply_to, caption=None, force_document=False):
-        messages = self.topics[reply_to].messages
-        if isinstance(file, str):   # Poster URL
-            messages.append(SimpleNamespace(photo=True, message=caption, file=None))
-        else:
-            files = file if isinstance(file, list) else [file]
-            self.sent_albums.append([uploaded.name for uploaded in files])
-            for uploaded in files:
-                messages.append(self.file_message(uploaded.name))
-            if self.lost_album_responses:
-                self.lost_album_responses -= 1
-                raise ConnectionError("Response lost")
-
-    def file_message(self, name):
-        return SimpleNamespace(photo=None, message="", file=SimpleNamespace(name=name))
-
-@pytest.fixture
-def telegram(monkeypatch):
-    fake = FakeTelegram()
-    async def fake_upload_file(client, file, file_name, progress_callback):
-        size = os.fstat(file.fileno()).st_size
-        progress_callback(size, size)
-        fake.uploaded_files.append(file_name)
-        return SimpleNamespace(name=file_name)
-    monkeypatch.setattr(telegram_api_client, "upload_file", fake_upload_file)
-    monkeypatch.setattr(telegram_api_client, "ForumTopic", FakeTopic)
-    monkeypatch.setattr(telegram_api_client, "UpdateNewChannelMessage", FakeUpdate)
-    return fake
 
 @pytest.fixture
 def split_movie(make_movie, tmp_path):

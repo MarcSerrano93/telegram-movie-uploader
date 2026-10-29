@@ -135,14 +135,14 @@ class TelegramApiClient(PipelineStage):
     async def _upload_files(self, client, supergroup, topic_id, item, label, folder, file_names, sent_files):
         """
         Uploads the files of folder that are not in sent_files, in order and in albums of up to 10.
-        label: name of the item in the logs (e.g. the movie title).
+        label: what is uploaded, for the logs (e.g. "movie: <title>").
         """
         pending = [name for name in file_names if name not in sent_files]
         if not pending:
-            self.log(f"\"{item.file_name}\": all {len(file_names)} file(s) already in Telegram, nothing to upload")
+            self.log(f"{label}: all {len(file_names)} file(s) already in Telegram, nothing to upload")
             return
         if len(pending) < len(file_names):
-            self.log(f"\"{item.file_name}\": resuming, {len(file_names) - len(pending)} of {len(file_names)} file(s) already in Telegram")
+            self.log(f"{label}: resuming, {len(file_names) - len(pending)} of {len(file_names)} file(s) already in Telegram")
         self.log(f"Uploading {label} to Telegram")
         start_time = time.time()
         total_size = 0
@@ -152,7 +152,7 @@ class TelegramApiClient(PipelineStage):
             uploaded_files = []
             for name in album_names:
                 file_path = os.path.join(folder, name)
-                part_label = f"part {file_names.index(name) + 1}/{len(file_names)}"
+                part_label = f"file {file_names.index(name) + 1}/{len(file_names)}"
                 uploaded_files.append(await self._retry(item, lambda: self._upload_part(client, file_path, part_label)))
                 total_size += os.path.getsize(file_path)
             await self._retry(item, lambda: self._send_album(client, supergroup, topic_id, album_names, uploaded_files))

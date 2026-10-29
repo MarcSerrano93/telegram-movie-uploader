@@ -24,13 +24,13 @@ def valid_config(tmp_path, monkeypatch):
 @pytest.fixture
 def load(tmp_path, monkeypatch):
     """
-    Writes the content to a temporary config.json and loads it with Config() for the movies mode.
+    Writes the content to a temporary config.json and loads it with Config() for the given mode.
     """
-    def load_config(content):
+    def load_config(content, mode="movies"):
         path = tmp_path / "config.json"
         path.write_text(content if isinstance(content, str) else json.dumps(content), encoding="utf-8")
         monkeypatch.setattr(config, "CONFIG_FILE_PATH", str(path))
-        return Config("movies")
+        return Config(mode)
     return load_config
 
 def test_valid_config(load, valid_config):
@@ -45,6 +45,17 @@ def test_valid_config(load, valid_config):
 def test_other_sections_are_not_checked(load, valid_config):
     valid_config["tv"] = {"source_files_path": "Z:/does/not/exist"}
     assert load(valid_config).mode == "movies"
+
+def test_tv_mode(load, valid_config, tmp_path):
+    del valid_config["movies"]
+    valid_config["tv"] = {"source_files_path": str(tmp_path), "telegram_group": "https://t.me/+tv"}
+    loaded = load(valid_config, mode="tv")
+    assert (loaded.source_files_path, loaded.destination_files_path, loaded.telegram_group) == (str(tmp_path), None, "https://t.me/+tv")
+
+def test_tv_mode_with_old_format(load, valid_config):
+    old = {"telegram_size_limit_mb": 4000, **valid_config["movies"]}
+    with pytest.raises(ConfigError, match="move the movie keys into a \"movies\" section"):
+        load(old, mode="tv")
 
 @pytest.mark.parametrize("limit", [1, 2000, 4000])
 def test_valid_size_limits(load, valid_config, limit):
