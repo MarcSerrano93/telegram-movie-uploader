@@ -10,9 +10,12 @@ from types import SimpleNamespace
 import pytest
 from telethon.errors import ForbiddenError
 
+from conftest import warning_reasons
 from core import shared_state
 from core.constants import FileStatus
 from core.telegram_api_client import TOPIC_TITLE_MAX_LENGTH
+from core.utils import PermanentError
+from movies import telegram_api_client as movies_telegram_api_client
 from movies.telegram_api_client import MovieTelegramApiClient
 
 @pytest.fixture
@@ -23,9 +26,10 @@ def split_movie(make_movie, tmp_path):
     def make(parts=3, **kwargs):
         movie = make_movie(**kwargs)
         movie.destination_path = str(tmp_path / "destination" / os.path.splitext(movie.file_name)[0])
-        os.makedirs(movie.destination_path)
+        movie.zip_parts_path = os.path.join(movie.destination_path, "zip_files")
+        os.makedirs(movie.zip_parts_path)
         for part in range(1, parts + 1):
-            with open(os.path.join(movie.destination_path, f"Película (2024).zip.{part:03d}"), "wb") as f:
+            with open(os.path.join(movie.zip_parts_path, f"Película (2024).zip.{part:03d}"), "wb") as f:
                 f.write(b"part")
         return movie
     return make
@@ -56,16 +60,37 @@ def test_original_is_moved_next_to_its_parts(telegram, split_movie):
     assert not os.path.exists(movie.file_full_path)
     assert os.path.isfile(os.path.join(movie.destination_path, movie.file_name))
 
-def test_small_movie_is_sent_as_a_single_document(telegram, make_movie, tmp_path):
+@pytest.fixture
+def small_movie(make_movie, tmp_path):
+    """
+    A movie as FileSplitter leaves the small ones: still in the source, and its destination folder not created yet.
+    """
     movie = make_movie()
-    movie.destination_path = str(tmp_path / "destination")
-    os.makedirs(movie.destination_path)
-    os.rename(movie.file_full_path, os.path.join(movie.destination_path, movie.file_name))
+    movie.destination_path = str(tmp_path / "destination" / "Movie (2024) {tmdb-1}")
+    return movie
 
-    upload(telegram, movie)
+def test_small_movie_is_sent_as_a_single_document(telegram, small_movie):
+    upload(telegram, small_movie)
 
-    assert telegram.sent_albums == [[movie.file_name]]
-    assert movie.status == FileStatus.UPLOADED
+    assert telegram.sent_albums == [[small_movie.file_name]]
+    assert small_movie.status == FileStatus.UPLOADED
+
+def test_small_movie_is_moved_after_the_upload(telegram, small_movie):
+    upload(telegram, small_movie)
+
+    assert not os.path.exists(small_movie.file_full_path)
+    assert os.path.isfile(os.path.join(small_movie.destination_path, small_movie.file_name))
+
+def test_small_movie_can_be_uploaded_again_after_a_failure(telegram, small_movie):
+    telegram.request_errors = [ConnectionError("Connection reset")] * 3
+    with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        upload(telegram, small_movie)
+    assert os.path.isfile(small_movie.file_full_path)
+
+    upload(telegram, small_movie)
+
+    assert telegram.sent_albums == [[small_movie.file_name]]
+    assert small_movie.status == FileStatus.UPLOADED
 
 def test_more_than_10_files_are_sent_in_several_albums(telegram, split_movie):
     upload(telegram, split_movie(parts=12))
@@ -147,10 +172,156 @@ def test_temporary_error_is_retried(telegram, split_movie):
     assert movie.status == FileStatus.UPLOADED
     assert len(telegram.topics) == 1
 
+def upload_to_both_groups(telegram, movie):
+    uploader = MovieTelegramApiClient(Queue(), "group", "mkv group")
+    asyncio.run(uploader._upload_item(telegram, "group", movie))
+
+def topic_of(telegram, group):
+    [topic] = [topic for topic in telegram.topics.values() if topic.group == group]
+    return topic
+
+def file_names_of(topic):
+    return [message.file.name for message in topic.messages if message.file]
+
+def add_mkv_parts(movie, count=2):
+    movie.mkv_parts_path = os.path.join(movie.destination_path, "mkv_parts")
+    os.makedirs(movie.mkv_parts_path)
+    names = [f"Película (2024) {{tmdb-1}} pt{part}.mkv" for part in range(1, count + 1)]
+    for name in names:
+        with open(os.path.join(movie.mkv_parts_path, name), "wb") as f:
+            f.write(b"part")
+    return names
+
+def test_big_movie_sends_zip_parts_and_mkv_parts_to_their_groups(telegram, split_movie):
+    movie = split_movie(parts=2)
+    mkv_names = add_mkv_parts(movie)
+
+    upload_to_both_groups(telegram, movie)
+
+    zip_topic, mkv_topic = topic_of(telegram, "group"), topic_of(telegram, "mkv group")
+    assert file_names_of(zip_topic) == part_names(2)
+    assert file_names_of(mkv_topic) == mkv_names
+    assert zip_topic.messages[0].photo and mkv_topic.messages[0].photo
+    assert zip_topic.title == mkv_topic.title
+    assert movie.status == FileStatus.UPLOADED
+    assert os.path.isfile(os.path.join(movie.destination_path, movie.file_name))
+
+def test_after_a_full_upload_only_the_original_is_left(telegram, split_movie):
+    movie = split_movie(parts=2)
+    add_mkv_parts(movie)
+
+    upload_to_both_groups(telegram, movie)
+
+    assert os.listdir(movie.destination_path) == [movie.file_name]
+
+def test_parts_are_kept_if_the_mkv_group_upload_fails(telegram, split_movie, monkeypatch):
+    movie = split_movie(parts=2)
+    add_mkv_parts(movie)
+    uploader = MovieTelegramApiClient(Queue(), "group", "mkv group")
+    real_upload_to_group = uploader._upload_to_group
+    async def upload_to_group(client, supergroup, *args):
+        if supergroup == "mkv group":
+            telegram.request_errors = [ConnectionError("Connection reset")] * 3
+        await real_upload_to_group(client, supergroup, *args)
+    monkeypatch.setattr(uploader, "_upload_to_group", upload_to_group)
+
+    with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        asyncio.run(uploader._upload_item(telegram, "group", movie))
+
+    assert sorted(os.listdir(movie.destination_path)) == ["mkv_parts", "zip_files"]
+    assert len(os.listdir(movie.zip_parts_path)) == 2
+    assert os.path.isfile(movie.file_full_path)
+
+def test_parts_that_cannot_be_deleted_only_give_a_warning(telegram, split_movie, monkeypatch):
+    movie = split_movie(parts=1)
+    def failing_rmtree(path):
+        raise PermissionError("File in use")
+    monkeypatch.setattr(movies_telegram_api_client.shutil, "rmtree", failing_rmtree)
+
+    upload(telegram, movie)
+
+    assert movie.status == FileStatus.UPLOADED
+    assert "could not delete" in warning_reasons()[0][2]
+
+def test_mkv_parts_are_uploaded_in_order_by_number(telegram, split_movie):
+    movie = split_movie(parts=1)
+    mkv_names = add_mkv_parts(movie, count=11)
+
+    upload_to_both_groups(telegram, movie)
+
+    assert file_names_of(topic_of(telegram, "mkv group")) == mkv_names
+
+def test_small_movie_goes_whole_to_both_groups(telegram, small_movie):
+    upload_to_both_groups(telegram, small_movie)
+
+    assert file_names_of(topic_of(telegram, "group")) == [small_movie.file_name]
+    assert file_names_of(topic_of(telegram, "mkv group")) == [small_movie.file_name]
+    assert small_movie.status == FileStatus.UPLOADED
+    assert not os.path.exists(small_movie.file_full_path)
+
+def test_failed_mkv_group_upload_keeps_a_small_movie_in_the_source(telegram, small_movie, monkeypatch):
+    uploader = MovieTelegramApiClient(Queue(), "group", "mkv group")
+    real_upload_to_group = uploader._upload_to_group
+    async def upload_to_group(client, supergroup, *args):
+        if supergroup == "mkv group":
+            telegram.request_errors = [ConnectionError("Connection reset")] * 3
+        await real_upload_to_group(client, supergroup, *args)
+    monkeypatch.setattr(uploader, "_upload_to_group", upload_to_group)
+
+    with pytest.raises(RuntimeError, match="failed after 3 attempts"):
+        asyncio.run(uploader._upload_item(telegram, "group", small_movie))
+
+    assert small_movie.status != FileStatus.UPLOADED
+    assert os.path.isfile(small_movie.file_full_path)
+
+def test_resume_only_uploads_what_the_mkv_group_is_missing(telegram, split_movie):
+    movie = split_movie(parts=1)
+    mkv_names = add_mkv_parts(movie)
+    zip_topic = telegram.add_topic("Película (2024) {tmdb-1}", "group")
+    zip_topic.messages.append(SimpleNamespace(photo=True, message="🎬| ...", file=None))
+    zip_topic.messages.append(telegram.file_message(part_names(1)[0]))
+    mkv_topic = telegram.add_topic("Película (2024) {tmdb-1}", "mkv group")
+    mkv_topic.messages.append(SimpleNamespace(photo=True, message="🎬| ...", file=None))
+    mkv_topic.messages.append(telegram.file_message(mkv_names[0]))
+
+    upload_to_both_groups(telegram, movie)
+
+    assert telegram.uploaded_files == [mkv_names[1]]
+
+def test_failed_mkv_group_upload_keeps_the_original_in_the_source(telegram, split_movie):
+    movie = split_movie(parts=1)
+    movie.mkv_parts_path = os.path.join(movie.destination_path, "missing")
+
+    with pytest.raises(FileNotFoundError):
+        upload_to_both_groups(telegram, movie)
+
+    assert movie.status != FileStatus.UPLOADED
+    assert os.path.isfile(movie.file_full_path)
+
+def test_wrong_mkv_group_fails_before_uploading_anything(telegram, split_movie):
+    movie = split_movie(parts=1)
+    telegram.unknown_groups.add("mkv group")
+
+    with pytest.raises(RuntimeError, match="Cannot find mkv group"):
+        upload_to_both_groups(telegram, movie)
+
+    assert telegram.uploaded_files == []
+
+def test_mkv_group_is_not_used_when_disabled(telegram, split_movie):
+    upload(telegram, split_movie(parts=1))
+
+    assert [topic.group for topic in telegram.topics.values()] == ["group"]
+
 def test_missing_part_files_fail(telegram, split_movie):
     movie = split_movie(parts=1)
-    for name in os.listdir(movie.destination_path):
-        os.remove(os.path.join(movie.destination_path, name))
+    for name in os.listdir(movie.zip_parts_path):
+        os.remove(os.path.join(movie.zip_parts_path, name))
 
-    with pytest.raises(Exception, match="File not found"):
+    with pytest.raises(PermanentError, match="No zip parts found"):
         upload(telegram, movie)
+
+def test_missing_small_movie_fails(telegram, small_movie):
+    os.remove(small_movie.file_full_path)
+
+    with pytest.raises(PermanentError, match="File not found"):
+        upload(telegram, small_movie)

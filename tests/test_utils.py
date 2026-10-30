@@ -1,12 +1,28 @@
 import asyncio
+import os
 
 import pytest
 
-from core import shared_state
+from core import shared_state, utils
 from core.constants import FileStatus, Step
-from core.utils import (PermanentError, format_duration, format_size, print_summary, report_failure, report_warning,
-                        with_retries, with_retries_async)
+from core.utils import (PermanentError, check_path_length, format_duration, format_size, print_summary, report_failure,
+                        report_warning, with_retries, with_retries_async)
 from movies.movie import Movie
+
+def test_path_over_the_limit_is_a_permanent_error(monkeypatch, tmp_path):
+    path = str(tmp_path / "file.mkv")
+    monkeypatch.setattr(utils, "MAX_PATH_LENGTH", len(os.path.realpath(path)) - 1)
+    with pytest.raises(PermanentError, match="Path too long"):
+        check_path_length(path)
+
+def test_path_of_exactly_the_limit_is_fine(monkeypatch, tmp_path):
+    path = str(tmp_path / "file.mkv")
+    monkeypatch.setattr(utils, "MAX_PATH_LENGTH", len(os.path.realpath(path)))
+    check_path_length(path)
+
+def test_no_path_limit_outside_windows(monkeypatch):
+    monkeypatch.setattr(utils, "MAX_PATH_LENGTH", None)
+    check_path_length("x" * 1000)
 
 class FloodWait(Exception):
     """

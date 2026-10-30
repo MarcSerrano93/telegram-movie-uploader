@@ -46,6 +46,75 @@ def test_other_sections_are_not_checked(load, valid_config):
     valid_config["tv"] = {"source_files_path": "Z:/does/not/exist"}
     assert load(valid_config).mode == "movies"
 
+@pytest.fixture
+def mkv_config(valid_config, monkeypatch):
+    """
+    A valid config with the MKV parts enabled and mkvmerge installed.
+    """
+    monkeypatch.setattr(config, "find_mkvmerge", lambda: "mkvmerge")
+    valid_config["movies"].update(mkv_parts_enabled=True, mkv_parts_telegram_group="https://t.me/+mkv")
+    return valid_config
+
+def test_mkv_parts_are_off_by_default(load, valid_config):
+    loaded = load(valid_config)
+    assert (loaded.mkv_parts_enabled, loaded.mkv_parts_telegram_group) == (False, None)
+
+def test_mkv_parts_enabled(load, mkv_config):
+    loaded = load(mkv_config)
+    assert (loaded.mkv_parts_enabled, loaded.mkv_parts_telegram_group) == (True, "https://t.me/+mkv")
+
+def test_mkv_parts_disabled_ignores_the_group_and_mkvmerge(load, mkv_config, monkeypatch):
+    monkeypatch.setattr(config, "find_mkvmerge", lambda: None)
+    mkv_config["movies"]["mkv_parts_enabled"] = False
+    loaded = load(mkv_config)
+    assert (loaded.mkv_parts_enabled, loaded.mkv_parts_telegram_group) == (False, None)
+
+@pytest.mark.parametrize("value", ["true", 1, None])
+def test_mkv_parts_enabled_must_be_a_boolean(load, mkv_config, value):
+    mkv_config["movies"]["mkv_parts_enabled"] = value
+    with pytest.raises(ConfigError, match="movies.mkv_parts_enabled must be true or false"):
+        load(mkv_config)
+
+def test_mkv_parts_need_their_group(load, mkv_config):
+    del mkv_config["movies"]["mkv_parts_telegram_group"]
+    with pytest.raises(ConfigError, match="missing key \"movies.mkv_parts_telegram_group\""):
+        load(mkv_config)
+
+@pytest.mark.parametrize("group", ["", "   ", None])
+def test_mkv_parts_group_empty(load, mkv_config, group):
+    mkv_config["movies"]["mkv_parts_telegram_group"] = group
+    with pytest.raises(ConfigError, match="movies.mkv_parts_telegram_group is empty"):
+        load(mkv_config)
+
+def test_mkv_parts_group_must_be_different(load, mkv_config):
+    mkv_config["movies"]["mkv_parts_telegram_group"] = mkv_config["movies"]["telegram_group"]
+    with pytest.raises(ConfigError, match="must be different from movies.telegram_group"):
+        load(mkv_config)
+
+def test_mkv_parts_need_mkvmerge(load, mkv_config, monkeypatch):
+    monkeypatch.setattr(config, "find_mkvmerge", lambda: None)
+    with pytest.raises(ConfigError, match="mkvmerge was not found: install MKVToolNix"):
+        load(mkv_config)
+
+def test_mkvmerge_is_found_automatically(load, mkv_config):
+    assert load(mkv_config).mkvmerge_path == "mkvmerge"
+
+def test_mkvmerge_path_is_used_when_set(load, mkv_config, monkeypatch, tmp_path):
+    monkeypatch.setattr(config, "find_mkvmerge", lambda: None)
+    path = tmp_path / "mkvmerge.exe"
+    path.write_bytes(b"")
+    mkv_config["movies"]["mkvmerge_path"] = str(path)
+    assert load(mkv_config).mkvmerge_path == str(path)
+
+def test_mkvmerge_path_must_exist(load, mkv_config, tmp_path):
+    mkv_config["movies"]["mkvmerge_path"] = str(tmp_path / "missing.exe")
+    with pytest.raises(ConfigError, match="movies.mkvmerge_path does not exist"):
+        load(mkv_config)
+
+def test_mkvmerge_path_is_ignored_when_disabled(load, mkv_config, tmp_path):
+    mkv_config["movies"].update(mkv_parts_enabled=False, mkvmerge_path=str(tmp_path / "missing.exe"))
+    assert load(mkv_config).mkvmerge_path is None
+
 def test_tv_mode(load, valid_config, tmp_path):
     del valid_config["movies"]
     valid_config["tv"] = {"source_files_path": str(tmp_path), "telegram_group": "https://t.me/+tv"}

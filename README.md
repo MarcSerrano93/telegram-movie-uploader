@@ -16,12 +16,18 @@ For each `.mkv` file in the source folder, the program:
 
 1. Reads the TMDB id from the file name.
 2. Fetches the movie info from TMDB (Spanish title, English title, year, genres, runtime, poster).
-3. Moves the file to its own folder inside the destination folder or, if it is bigger than
-   `telegram_size_limit_mb`, splits it there into a multi-part zip (`.zip.001`, `.zip.002`...), the
-   same format as 7-Zip's split archives, opened with 7-Zip or WinRAR.
+3. If the file is bigger than `telegram_size_limit_mb`, splits it into a multi-part zip (`.zip.001`,
+   `.zip.002`...) in a temporary folder inside the destination folder. It is the same format as 7-Zip's
+   split archives, opened with 7-Zip or WinRAR.
 4. Finds the movie's topic in the Telegram group, or creates it, posts the poster with a caption
    and uploads the file or parts.
-5. Once uploaded, moves the original of a split file next to its parts.
+5. Once uploaded, moves the original file to its own folder inside the destination folder and deletes
+   the parts. Until then everything stays in place, so a failed upload can be run again.
+
+Optionally, each movie also goes to a second group as MKV files that play without unzipping
+(`mkv_parts_enabled`, needs [MKVToolNix](https://mkvtoolnix.download)). Movies bigger than the limit are
+split into playable parts (` pt1.mkv`, ` pt2.mkv`...), smaller ones are sent as they are. The topic and
+poster are the same as in the main group.
 
 ### TV mode
 
@@ -46,6 +52,8 @@ a default image from `media/` is sent instead.
   (Telegram Premium is needed to upload files bigger than 2000 MB)
 - A Telegram supergroup with topics enabled, where your account can create topics
 - A TMDB API key from https://www.themoviedb.org/settings/api
+- Only for `mkv_parts_enabled`: `mkvmerge`, from [MKVToolNix](https://mkvtoolnix.download), installed or
+  portable (see `mkvmerge_path` below). On Debian or Ubuntu: `apt-get install mkvtoolnix`
 
 ## File naming
 
@@ -111,7 +119,10 @@ Copy `config.example.json` to `config.json` and fill it in:
     "movies": {
         "source_files_path": "E:/Movies/ToUpload/",
         "destination_files_path": "E:/Movies/Uploaded/",
-        "telegram_group": "https://t.me/+yourMoviesGroupInviteLink"
+        "telegram_group": "https://t.me/+yourMoviesGroupInviteLink",
+        "mkv_parts_enabled": false,
+        "mkv_parts_telegram_group": "https://t.me/+yourMkvGroupInviteLink",
+        "mkvmerge_path": "C:/Tools/mkvtoolnix/mkvmerge.exe"
     },
     "tv": {
         "source_files_path": "E:/TV/ToUpload/",
@@ -122,11 +133,14 @@ Copy `config.example.json` to `config.json` and fill it in:
 
 | Field | Description |
 |---|---|
-| `telegram_size_limit_mb` | Telegram upload limit of your account, in MB (4000 with Premium, 2000 without). Bigger movies are split into parts of this size, shows with a bigger episode are skipped |
+| `telegram_size_limit_mb` | Telegram upload limit of your account, in MB (4000 with Premium, 2000 without). Bigger movies are split into parts of up to this size, shows with a bigger episode are skipped |
 | `movies` | Settings of the movies mode |
 | `movies.source_files_path` | Folder with the `.mkv` files to upload |
-| `movies.destination_files_path` | Folder where files are moved or split (must exist) |
+| `movies.destination_files_path` | Folder where parts are created and uploaded files are moved (must exist) |
 | `movies.telegram_group` | Invite link or @username of the Telegram group (your account must be a member) |
+| `movies.mkv_parts_enabled` | Optional, `false` by default. Also upload each movie as MKV files to a second group |
+| `movies.mkv_parts_telegram_group` | The second group, different from `movies.telegram_group`. Only needed if enabled |
+| `movies.mkvmerge_path` | Optional. Path of `mkvmerge`, e.g. for a portable copy. Without it, it is looked for in the `PATH` and in `C:\Program Files\MKVToolNix\` |
 | `tv` | Settings of the TV mode |
 | `tv.source_files_path` | Folder with one subfolder per show |
 | `tv.telegram_group` | Invite link or @username of the Telegram group (your account must be a member) |
@@ -156,15 +170,33 @@ log in automatically.
 ### Result in movies mode
 
 Each movie gets a folder in the destination named after the source file. Split parts are named after
-the TMDB title:
+the TMDB title. While a big movie is being uploaded, its folder has the parts:
 
 ```
 Uploaded/
   Movie Title (2024) {tmdb-112233}/
-    Título (2024).zip.001
-    Título (2024).zip.002
-    Movie Title (2024) {tmdb-112233}.mkv    <- original, moved here after the upload
+    zip_files/
+      Título (2024).zip.001
+      Título (2024).zip.002
+    mkv_parts/                              <- only with mkv_parts_enabled
+      Título (2024) {tmdb-112233} pt1.mkv
+      Título (2024) {tmdb-112233} pt2.mkv
 ```
+
+After a successful upload the parts are deleted and only the original is left:
+
+```
+Uploaded/
+  Movie Title (2024) {tmdb-112233}/
+    Movie Title (2024) {tmdb-112233}.mkv
+```
+
+Big movies wait for the uploads before being split, so with `mkv_parts_enabled` the parts of up to 5
+movies can be on disk at once, at different stages. For 5 GB movies, keep about 40 GB free in the
+destination folder.
+
+On Windows, the full path of each part must fit in 259 characters. If the destination folder, the source
+file name and the TMDB title together are too long, the movie stops with a `Path too long` error.
 
 In Telegram, each movie has a topic named `Title (Year) {tmdb-112233}` with the poster message and
 one message with all the files (in albums of up to 10 files, Telegram's limit).
@@ -179,9 +211,10 @@ topic gets the show poster with a "¡Ir a la serie!" link to the topic.
 
 Fix the problem shown in the summary and run the script again. Already processed work is not repeated:
 
-- Files already split (their folder exists in the destination) are not split again.
+- Files already split (their `zip_files` or `mkv_parts` folder exists) are not split again.
 - The existing topic is found by its `{tmdb-<id>}` tag and reused, no duplicate is created.
 - The posters, backdrop and any files already in the topic are skipped; only the missing ones are uploaded.
+  Files are recognized by name, so a renamed file is uploaded again.
 
 To add a new season of a show, put its episodes in the show folder and run the TV mode again: only
 the new season's poster and episodes are sent, nothing is posted in General. The episodes already in
@@ -191,8 +224,8 @@ Files uploaded on a resumed run arrive as a separate message, not inside the ori
 
 ## Running the tests
 
-The tests run offline: TMDB and Telegram are replaced by fakes, so no `.env`, `config.json` or account is
-needed. The test that opens the zip parts with the real 7-Zip is skipped if `7z.exe` is not in the
+The tests run offline: TMDB, Telegram and `mkvmerge` are replaced by fakes, so no `.env`, `config.json`,
+account or MKVToolNix is needed. The test that opens the zip parts with the real 7-Zip is skipped if `7z.exe` is not in the
 project root.
 
 ```
@@ -211,16 +244,18 @@ pytest
 | `tmdb.py` | TMDB requests and the `{tmdb-<id>}` tag |
 | `telegram_api_client.py` | Base of the upload stage: connection, topics, file uploads in albums |
 | `zip_split.py` | Creates the multi-part zips |
+| `mkv_split.py` | Finds and runs `mkvmerge` to create playable MKV parts |
 | `utils.py` | Retries, error/warning reporting and the final summary |
 | `constants.py` | Shared constants |
 | `shared_state.py` | Items, errors and warnings shared by the stages, for the final summary |
 | **`src/movies/`** | **Movies mode** |
-| `pipeline.py` | The stages of the mode: TMDB -> move or split -> upload |
+| `pipeline.py` | The stages of the mode: TMDB -> zip parts -> MKV parts (optional) -> upload |
 | `folder_reader.py` | Lists the `.mkv` files of the source folder |
 | `tmdb_api_client.py` | Stage 1: fetches the movie info from TMDB |
 | `tmdb_constants.py` | Spanish genre names |
-| `file_splitter.py` | Stage 2: moves or splits the file into the destination folder |
-| `telegram_api_client.py` | Stage 3: creates the topic and uploads the poster and files |
+| `file_splitter.py` | Stage 2: splits big movies into zip parts |
+| `mkv_splitter.py` | Optional stage 3: splits big movies into MKV parts |
+| `telegram_api_client.py` | Last stage: creates the topic, uploads the poster and files in each group and deletes the parts |
 | `movie.py` | Movie data and the Telegram caption |
 | **`src/tv/`** | **TV mode** |
 | `pipeline.py` | The stages of the mode: TMDB -> upload |

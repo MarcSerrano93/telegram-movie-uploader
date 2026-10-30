@@ -6,6 +6,7 @@ from queue import Queue
 import pytest
 
 from conftest import error_reasons
+from core import utils
 from core.constants import FileStatus
 from movies import file_splitter
 from movies.file_splitter import FileSplitter
@@ -43,35 +44,37 @@ def failing_split(errors):
         return real_split(*args)
     return split
 
-def test_small_file_is_moved(make_movie, destination):
+def test_small_file_stays_in_the_source(make_movie, destination):
     movie = make_movie("Small (2024) {tmdb-1}.mkv", size=1000)
 
     assert run_splitter([movie], destination) == [movie]
 
-    folder = destination / "Small (2024) {tmdb-1}"
-    assert os.listdir(folder) == ["Small (2024) {tmdb-1}.mkv"]
-    assert not os.path.exists(movie.file_full_path)
-    assert movie.destination_path == str(folder)
+    assert os.path.isfile(movie.file_full_path)
+    assert os.listdir(destination) == []
+    assert movie.destination_path == str(destination / "Small (2024) {tmdb-1}")
+    assert movie.zip_parts_path == ""
     assert movie.status == FileStatus.SPLIT
 
-def test_file_of_exactly_the_limit_is_moved(make_movie, destination):
+def test_file_of_exactly_the_limit_is_not_split(make_movie, destination):
     movie = make_movie("Movie (2024) {tmdb-1}.mkv", size=MB)
 
     run_splitter([movie], destination)
 
-    assert os.listdir(destination / "Movie (2024) {tmdb-1}") == ["Movie (2024) {tmdb-1}.mkv"]
+    assert movie.zip_parts_path == ""
+    assert os.listdir(destination) == []
 
 def test_big_file_is_split_and_original_kept(make_movie, destination):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=2 * MB + MB // 2, title="Big: Movie?")
 
     assert run_splitter([movie], destination, limit_mb=1) == [movie]
 
-    folder = destination / "Big (2024) {tmdb-1}"
+    folder = destination / "Big (2024) {tmdb-1}" / "zip_files"
     # Characters not allowed in file names are replaced
     parts = sorted(os.listdir(folder))
     assert parts == ["Big. Movie. (2024).zip.001", "Big. Movie. (2024).zip.002", "Big. Movie. (2024).zip.003"]
     assert all(os.path.getsize(folder / part) <= MB for part in parts)
     assert os.path.exists(movie.file_full_path)
+    assert movie.zip_parts_path == str(folder)
     assert not os.path.exists(f"{folder}.partial")
     assert movie.status == FileStatus.SPLIT
 
@@ -79,7 +82,7 @@ def test_parts_contain_the_movie(make_movie, destination, tmp_path):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1, title="Big")
     run_splitter([movie], destination)
 
-    folder = destination / "Big (2024) {tmdb-1}"
+    folder = destination / "Big (2024) {tmdb-1}" / "zip_files"
     joined = tmp_path / "joined.zip"
     with open(joined, "wb") as f:
         for part in sorted(os.listdir(folder)):
@@ -98,18 +101,26 @@ def test_split_logs_start_and_end(make_movie, destination, capsys):
 
 def test_already_split_file_is_not_split_again(make_movie, destination, monkeypatch):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
-    (destination / "Big (2024) {tmdb-1}").mkdir()
+    (destination / "Big (2024) {tmdb-1}" / "zip_files").mkdir(parents=True)
     monkeypatch.setattr(file_splitter, "create_split_zip", failing_split([AssertionError("split again")]))
 
     assert run_splitter([movie], destination) == [movie]
     assert error_reasons() == []
+
+def test_movie_uploaded_before_is_split_again(make_movie, destination):
+    # After a full upload its folder exists, with only the original or empty, and its parts were deleted
+    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
+    (destination / "Big (2024) {tmdb-1}").mkdir()
+
+    assert run_splitter([movie], destination) == [movie]
+    assert len(os.listdir(destination / "Big (2024) {tmdb-1}" / "zip_files")) == 2
 
 def test_failed_split_is_retried(make_movie, destination, monkeypatch):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
     monkeypatch.setattr(file_splitter, "create_split_zip", failing_split([OSError("Disk busy")]))
 
     assert run_splitter([movie], destination) == [movie]
-    assert len(os.listdir(destination / "Big (2024) {tmdb-1}")) == 2
+    assert len(os.listdir(destination / "Big (2024) {tmdb-1}" / "zip_files")) == 2
 
 def test_split_failing_3_times_is_reported(make_movie, destination, monkeypatch):
     movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
@@ -118,8 +129,16 @@ def test_split_failing_3_times_is_reported(make_movie, destination, monkeypatch)
     assert run_splitter([movie], destination) == []
     assert error_reasons() == [("SPLIT", movie.file_name, "No space left on device (failed after 3 attempts)")]
     # Only the temporary folder is left, so the next run splits it again
-    assert not os.path.exists(destination / "Big (2024) {tmdb-1}")
+    assert not os.path.exists(destination / "Big (2024) {tmdb-1}" / "zip_files")
     assert movie.status == FileStatus.ERROR
+
+def test_too_long_path_fails_without_retrying(make_movie, destination, monkeypatch, capsys):
+    movie = make_movie("Big (2024) {tmdb-1}.mkv", size=MB + 1)
+    monkeypatch.setattr(utils, "MAX_PATH_LENGTH", 10)
+
+    assert run_splitter([movie], destination) == []
+    assert "Path too long" in error_reasons()[0][2]
+    assert "retrying" not in capsys.readouterr().out
 
 def test_missing_source_file_is_reported(make_movie, destination):
     movie = make_movie()

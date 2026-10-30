@@ -8,12 +8,15 @@ from core.constants import FileStatus
 from core.tmdb import parse_tmdb_id
 
 CAPTION_MAX_GENRES = 5
+INVALID_FILE_NAME_CHARS = r'[<>:"/\\|?*]'
 
 class Movie:
     def __init__(self, file_full_path):
         self.file_full_path = file_full_path
         self.file_name = os.path.basename(file_full_path)
         self.destination_path = ""
+        self.zip_parts_path = ""    # Only for movies split into zip parts
+        self.mkv_parts_path = ""    # Only for movies split into MKV parts
         self.title = ""
         self.title_en = ""
         self.year = ""
@@ -35,6 +38,12 @@ class Movie:
         self.duration = duration_min
         self.poster_path = poster_path
         self.status = FileStatus.PARSED
+
+    def get_file_title(self):
+        """
+        Returns the base name of the parts of the movie: "Title (Year)", without characters not allowed in file names.
+        """
+        return f"{re.sub(INVALID_FILE_NAME_CHARS, '.', self.title)} ({self.year})"
 
     def generate_telegram_poster_caption(self):
         """

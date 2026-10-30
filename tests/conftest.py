@@ -47,9 +47,10 @@ def error_reasons():
     return [(step.value, file_name, str(reason)) for step, file_name, reason in shared_state.errors]
 
 class FakeTopic:
-    def __init__(self, topic_id, title):
+    def __init__(self, topic_id, title, group=None):
         self.id = topic_id
         self.title = title
+        self.group = group      # None: visible from any group
         self.messages = []
 
 class FakeUpdate:
@@ -69,11 +70,17 @@ class FakeTelegram:
         self.request_errors = []        # Raised by the next topic requests
         self.request_count = 0
         self.broken_image_urls = set()  # Image URLs that Telegram cannot download
+        self.unknown_groups = set()     # Groups that get_entity cannot find
 
-    def add_topic(self, title):
-        topic = FakeTopic(len(self.topics) + 100, title)
+    def add_topic(self, title, group=None):
+        topic = FakeTopic(len(self.topics) + 100, title, group)
         self.topics[topic.id] = topic
         return topic
+
+    async def get_entity(self, group):
+        if group in self.unknown_groups:
+            raise ValueError(f"Cannot find {group}")
+        return group
 
     async def __call__(self, request):
         self.request_count += 1
@@ -81,9 +88,9 @@ class FakeTelegram:
             raise self.request_errors.pop(0)
         if isinstance(request, GetForumTopicsRequest):
             # Like Telegram's search, it may also return topics that only look similar
-            return SimpleNamespace(topics=list(self.topics.values()))
+            return SimpleNamespace(topics=[topic for topic in self.topics.values() if topic.group in (None, request.peer)])
         if isinstance(request, CreateForumTopicRequest):
-            topic = self.add_topic(request.title)
+            topic = self.add_topic(request.title, request.peer)
             return SimpleNamespace(updates=[FakeUpdate(topic.id)])
         raise NotImplementedError(request)
 

@@ -2,15 +2,26 @@
 Helpers shared by the stages: error and warning reporting, retries, formatting and the final summary.
 """
 import asyncio
+import os
 import time
 
 from core import shared_state
 from core.constants import FileStatus, LogColor, Step, MAX_ATTEMPTS, RETRY_DELAYS
 
+MAX_PATH_LENGTH = 259 if os.name == "nt" else None   # Windows limit for the full path of a file
+
 class PermanentError(Exception):
     """
     An error that would fail again on every attempt (wrong id, missing file...), so it is not retried.
     """
+
+def check_path_length(path):
+    """
+    Raises if the path is too long to create the file, instead of the unclear error the system would give.
+    """
+    length = len(os.path.realpath(path))
+    if MAX_PATH_LENGTH and length > MAX_PATH_LENGTH:
+        raise PermanentError(f"Path too long ({length} characters, the Windows limit is {MAX_PATH_LENGTH}): shorten the destination folder or the file name: {path}")
 
 def report_failure(step: Step, file_name, reason):
     """

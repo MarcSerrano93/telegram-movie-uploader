@@ -13,7 +13,7 @@ RETRY_DELAYS = [10, 30]   # Seconds to wait before attempt 2 and attempt 3
 class FileStatus(Enum):
     NONE = 0
     PARSED = 1
-    SPLIT = 2       # Moved or split into the destination folder
+    SPLIT = 2       # Split into the destination folder, if it was needed
     UPLOADED = 3
     ERROR = 4
 

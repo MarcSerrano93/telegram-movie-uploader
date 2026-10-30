@@ -5,6 +5,8 @@ It is what "7z a -tzip -mx0 -v<size>m" does: one normal zip cut into pieces, ope
 import os
 import zipfile
 
+from core.utils import check_path_length
+
 class _SplitWriter:
     """
     Write-only file object for zipfile: writes to base_path.001, base_path.002... of at most part_size bytes each.
@@ -54,6 +56,7 @@ def create_split_zip(source_path, archive_path, part_size):
     Zips source_path into archive_path.001, archive_path.002... of at most part_size bytes each.
     Returns the paths of the parts.
     """
+    check_path_length(f"{archive_path}.001")
     writer = _SplitWriter(archive_path, part_size)
     try:
         with zipfile.ZipFile(writer, "w", compression=zipfile.ZIP_STORED, allowZip64=True) as archive:

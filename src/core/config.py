@@ -5,6 +5,7 @@ import json
 import os
 
 from core.constants import PROJECT_ROOT
+from core.mkv_split import find_mkvmerge
 
 CONFIG_FILE_PATH = os.path.join(PROJECT_ROOT, "config.json")
 TELEGRAM_MAX_SIZE_LIMIT_MB = 4000   # Telegram Premium upload limit per file
@@ -14,8 +15,11 @@ TELEGRAM_SIZE_LIMIT_MB = "telegram_size_limit_mb"
 SOURCE_FILES_PATH = "source_files_path"
 DESTINATION_FILES_PATH = "destination_files_path"
 TELEGRAM_GROUP = "telegram_group"
+MKV_PARTS_ENABLED = "mkv_parts_enabled"                 # Optional, movies only
+MKV_PARTS_TELEGRAM_GROUP = "mkv_parts_telegram_group"   # Only needed if enabled
+MKVMERGE_PATH = "mkvmerge_path"                         # Optional, for a mkvmerge that find_mkvmerge() does not find
 
-# Keys of the section of each mode. Only the section of the mode being run is checked
+# Required keys of the section of each mode. Only the section of the mode being run is checked
 MODE_KEYS = {
     "movies": (SOURCE_FILES_PATH, DESTINATION_FILES_PATH, TELEGRAM_GROUP),
     "tv": (SOURCE_FILES_PATH, TELEGRAM_GROUP),
@@ -39,6 +43,9 @@ class Config:
         self.source_files_path = self._get(section, SOURCE_FILES_PATH, mode)
         self.destination_files_path = self._get(section, DESTINATION_FILES_PATH, mode) if DESTINATION_FILES_PATH in MODE_KEYS[mode] else None
         self.telegram_group = self._get(section, TELEGRAM_GROUP, mode)
+        self.mkv_parts_enabled = section.get(MKV_PARTS_ENABLED, False) if mode == "movies" else False
+        self.mkv_parts_telegram_group = self._get(section, MKV_PARTS_TELEGRAM_GROUP, mode) if self.mkv_parts_enabled is True else None
+        self.mkvmerge_path = section.get(MKVMERGE_PATH) if self.mkv_parts_enabled is True else None
         self._validate()
 
     def _load(self):
@@ -80,8 +87,28 @@ class Config:
             raise ConfigError(f"{TELEGRAM_SIZE_LIMIT_MB} must be a whole number between 1 and {TELEGRAM_MAX_SIZE_LIMIT_MB} (MB)")
         if self.telegram_group is None or str(self.telegram_group).strip() == "":
             raise ConfigError(f"{self._name(TELEGRAM_GROUP, self.mode)} is empty")
+        self._validate_mkv_parts()
         for name in ENV_VARIABLES:
             if not os.getenv(name):
                 raise ConfigError(f"{name} is missing in .env")
         if not os.getenv("API_ID").isdigit():
             raise ConfigError("API_ID in .env must be a number")
+
+    def _validate_mkv_parts(self):
+        if type(self.mkv_parts_enabled) is not bool:
+            raise ConfigError(f"{self._name(MKV_PARTS_ENABLED, self.mode)} must be true or false")
+        if not self.mkv_parts_enabled:
+            return
+        group_name = self._name(MKV_PARTS_TELEGRAM_GROUP, self.mode)
+        if self.mkv_parts_telegram_group is None or str(self.mkv_parts_telegram_group).strip() == "":
+            raise ConfigError(f"{group_name} is empty")
+        if self.mkv_parts_telegram_group == self.telegram_group:
+            raise ConfigError(f"{group_name} must be different from {self._name(TELEGRAM_GROUP, self.mode)}")
+        if self.mkvmerge_path:
+            if not os.path.isfile(self.mkvmerge_path):
+                raise ConfigError(f"{self._name(MKVMERGE_PATH, self.mode)} does not exist: {self.mkvmerge_path}")
+            return
+        self.mkvmerge_path = find_mkvmerge()
+        if self.mkvmerge_path is None:
+            raise ConfigError(f"{self._name(MKV_PARTS_ENABLED, self.mode)} is on but mkvmerge was not found: install MKVToolNix from "
+                              f"https://mkvtoolnix.download or set {self._name(MKVMERGE_PATH, self.mode)}")

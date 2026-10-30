@@ -12,6 +12,7 @@ from core.constants import FileStatus, Step
 from core.pipeline_stage import PipelineStage
 from conftest import fake_response
 from core.utils import print_summary
+from movies.mkv_splitter import MkvSplitter
 
 class FakeUpload(PipelineStage):
     """
@@ -20,7 +21,7 @@ class FakeUpload(PipelineStage):
     step = Step.UPLOAD
     log_name = "FakeUpload"
 
-    def __init__(self, input_queue, telegram_group):
+    def __init__(self, input_queue, telegram_group, mkv_parts_telegram_group=None):
         super().__init__(input_queue, Queue())
 
     def process(self, movie):
@@ -51,7 +52,8 @@ def test_movies_pipeline(tmp_path, monkeypatch, capsys):
                  "Network down (2022) {tmdb-99}.mkv", "No tag (2019).mkv"]:
         (source / name).write_bytes(b"movie")
     config = SimpleNamespace(source_files_path=str(source), destination_files_path=str(destination),
-                             telegram_size_limit_mb=4000, telegram_group="group")
+                             telegram_size_limit_mb=4000, telegram_group="group",
+                             mkv_parts_enabled=False, mkv_parts_telegram_group=None)
 
     shared_state.items.extend(movies.pipeline.read_items(config))
     input_queue = Queue()
@@ -69,7 +71,7 @@ def test_movies_pipeline(tmp_path, monkeypatch, capsys):
     assert statuses == {"1": FileStatus.UPLOADED, "7": FileStatus.UPLOADED, "404": FileStatus.ERROR, "99": FileStatus.ERROR}
     good = next(movie for movie in shared_state.items if movie.tmdb_id == "1")
     assert (good.title, good.year, good.genres, good.duration) == ("Película 1", "2024", ["Acción"], 100)
-    assert (destination / "Good (2024) {tmdb-1}" / "Good (2024) {tmdb-1}.mkv").is_file()
+    assert good.destination_path == str(destination / "Good (2024) {tmdb-1}")
 
     capsys.readouterr()
     print_summary(movies.pipeline.ITEM_LABEL)
@@ -79,3 +81,15 @@ def test_movies_pipeline(tmp_path, monkeypatch, capsys):
     assert "No {tmdb-<id>} tag in the file name" in output
     assert "Movie not found in TMDB" in output
     assert "Connection aborted (failed after 3 attempts)" in output
+
+def test_mkv_stage_only_runs_when_enabled():
+    config = SimpleNamespace(destination_files_path="", telegram_size_limit_mb=4000, telegram_group="group",
+                             mkv_parts_enabled=False, mkv_parts_telegram_group=None)
+    assert not any(isinstance(stage, MkvSplitter) for stage in movies.pipeline.create_stages(config, Queue()))
+
+    config.mkv_parts_enabled, config.mkv_parts_telegram_group, config.mkvmerge_path = True, "mkv group", "mkvmerge"
+    stages = movies.pipeline.create_stages(config, Queue())
+    assert [type(stage).__name__ for stage in stages] == ["MovieTmdbApiClient", "FileSplitter", "MkvSplitter", "MovieTelegramApiClient"]
+    assert stages[-1].mkv_parts_telegram_group == "mkv group"
+    # Splitting waits for the uploads, so the parts of many movies do not fill the disk
+    assert stages[1].output_queue.maxsize == stages[2].output_queue.maxsize == 1
