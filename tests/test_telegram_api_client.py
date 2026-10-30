@@ -10,13 +10,15 @@ from types import SimpleNamespace
 import pytest
 from telethon.errors import ForbiddenError
 
-from conftest import warning_reasons
+from conftest import FakeGroup, warning_reasons
 from core import shared_state
 from core.constants import FileStatus
 from core.telegram_api_client import TOPIC_TITLE_MAX_LENGTH
 from core.utils import PermanentError
 from movies import telegram_api_client as movies_telegram_api_client
 from movies.telegram_api_client import MovieTelegramApiClient
+
+GROUP = FakeGroup("group")
 
 @pytest.fixture
 def split_movie(make_movie, tmp_path):
@@ -39,7 +41,7 @@ def part_names(count, start=1):
 
 def upload(telegram, movie):
     uploader = MovieTelegramApiClient(Queue(), "group")
-    asyncio.run(uploader._upload_item(telegram, "group", movie))
+    asyncio.run(uploader._upload_item(telegram, GROUP, movie))
 
 def test_new_movie_creates_topic_poster_and_one_album(telegram, split_movie):
     movie = split_movie(parts=3)
@@ -174,7 +176,7 @@ def test_temporary_error_is_retried(telegram, split_movie):
 
 def upload_to_both_groups(telegram, movie):
     uploader = MovieTelegramApiClient(Queue(), "group", "mkv group")
-    asyncio.run(uploader._upload_item(telegram, "group", movie))
+    asyncio.run(uploader._upload_item(telegram, GROUP, movie))
 
 def topic_of(telegram, group):
     [topic] = [topic for topic in telegram.topics.values() if topic.group == group]
@@ -226,7 +228,7 @@ def test_parts_are_kept_if_the_mkv_group_upload_fails(telegram, split_movie, mon
     monkeypatch.setattr(uploader, "_upload_to_group", upload_to_group)
 
     with pytest.raises(RuntimeError, match="failed after 3 attempts"):
-        asyncio.run(uploader._upload_item(telegram, "group", movie))
+        asyncio.run(uploader._upload_item(telegram, GROUP, movie))
 
     assert sorted(os.listdir(movie.destination_path)) == ["mkv_parts", "zip_files"]
     assert len(os.listdir(movie.zip_parts_path)) == 2
@@ -269,7 +271,7 @@ def test_failed_mkv_group_upload_keeps_a_small_movie_in_the_source(telegram, sma
     monkeypatch.setattr(uploader, "_upload_to_group", upload_to_group)
 
     with pytest.raises(RuntimeError, match="failed after 3 attempts"):
-        asyncio.run(uploader._upload_item(telegram, "group", small_movie))
+        asyncio.run(uploader._upload_item(telegram, GROUP, small_movie))
 
     assert small_movie.status != FileStatus.UPLOADED
     assert os.path.isfile(small_movie.file_full_path)
@@ -325,3 +327,57 @@ def test_missing_small_movie_fails(telegram, small_movie):
 
     with pytest.raises(PermanentError, match="File not found"):
         upload(telegram, small_movie)
+
+def test_new_movie_posts_its_poster_in_general_with_a_link(telegram, split_movie):
+    upload(telegram, split_movie(parts=1))
+
+    [topic] = telegram.topics.values()
+    [entry] = telegram.general
+    assert entry.silent
+    assert entry.image == "https://image.tmdb.org/t/p/w500/poster.jpg"
+    assert entry.caption.startswith("🎬| **Película**")
+    assert entry.caption.endswith(f"👉 | [¡Ir a la película!](https://t.me/c/555/{topic.id})**")
+
+def test_new_movie_posts_in_general_of_both_groups(telegram, split_movie):
+    movie = split_movie(parts=1)
+    add_mkv_parts(movie)
+
+    upload_to_both_groups(telegram, movie)
+
+    assert len(telegram.general) == 2
+
+def test_movie_without_poster_posts_its_text_in_general(telegram, split_movie):
+    movie = split_movie(parts=1)
+    movie.poster_path = ""
+
+    upload(telegram, movie)
+
+    [entry] = telegram.general
+    assert entry.silent
+    assert entry.photo is None
+    assert entry.text.endswith("[¡Ir a la película!](https://t.me/c/555/100)**")
+
+def test_existing_topic_with_poster_posts_nothing_in_general(telegram, split_movie):
+    movie = split_movie(parts=1)
+    topic = telegram.add_topic("Película (2024) {tmdb-1}")
+    topic.messages.append(SimpleNamespace(photo=True, message="🎬| ...", file=None))
+
+    upload(telegram, movie)
+
+    assert telegram.general == []
+
+def test_every_message_of_a_movie_is_silent(telegram, split_movie):
+    upload(telegram, split_movie(parts=2))
+
+    [topic] = telegram.topics.values()
+    assert len(topic.messages) == 3
+    assert all(message.silent for message in topic.messages)
+
+def test_text_poster_is_silent(telegram, split_movie):
+    movie = split_movie(parts=1)
+    movie.poster_path = ""
+
+    upload(telegram, movie)
+
+    [topic] = telegram.topics.values()
+    assert topic.messages[0].silent

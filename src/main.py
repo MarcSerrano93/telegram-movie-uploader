@@ -20,7 +20,9 @@ PIPELINES = {"movies": movies.pipeline, "tv": tv.pipeline}
 def main():
     parser = argparse.ArgumentParser(description="Uploads media to a Telegram forum group, one topic per item.")
     parser.add_argument("mode", choices=MODES, help="what to upload")
-    mode = parser.parse_args().mode
+    parser.add_argument("--filter", default="", help="only upload the movie files or show folders with this text in the name")
+    args = parser.parse_args()
+    mode, name_filter = args.mode, args.filter
 
     load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
     try:
@@ -29,7 +31,10 @@ def main():
         print(f"Invalid config file: {e}")
         return
     pipeline = PIPELINES[mode]
-    shared_state.items.extend(pipeline.read_items(config))
+    shared_state.items.extend(pipeline.read_items(config, name_filter))
+    if name_filter and not shared_state.items and not shared_state.errors:
+        print(f"Nothing in {config.source_files_path} has \"{name_filter}\" in its name")
+        return
 
     # Each stage passes the items it processed successfully to the next one through a queue
     input_queue = Queue()

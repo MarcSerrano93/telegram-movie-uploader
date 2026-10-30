@@ -8,14 +8,13 @@ import os
 from telethon.errors import WebpageCurlFailedError, WebpageMediaEmptyError
 
 from core.constants import FileStatus, PROJECT_ROOT
-from core.telegram_api_client import TelegramApiClient
+from core.telegram_api_client import TelegramApiClient, get_topic_link
 from core.utils import report_warning
 from tv.show import BACKDROP_CAPTION_START, Show
 
 MEDIA_PATH = os.path.join(PROJECT_ROOT, "media")
 DEFAULT_BACKDROP = os.path.join(MEDIA_PATH, "no-media-banner.png")
 DEFAULT_POSTER = os.path.join(MEDIA_PATH, "no-media-poster.png")
-TOPIC_LINK_URL = "https://t.me/c/{group_id}/{topic_id}"
 IMAGE_URL_ERRORS = (WebpageMediaEmptyError, WebpageCurlFailedError)   # Telegram could not download the image from TMDB
 
 class ShowTelegramApiClient(TelegramApiClient):
@@ -31,17 +30,17 @@ class ShowTelegramApiClient(TelegramApiClient):
     async def _send_image(self, client, supergroup, show: Show, image_url, default_image, caption, description, topic_id=None):
         """
         Sends the TMDB image with its caption or, if TMDB has none or Telegram cannot download it, the default image.
-        Without topic_id it goes to the General topic.
+        Without topic_id it goes to the General topic. It is always silent.
         """
         if image_url:
             try:
-                await client.send_file(entity=supergroup, file=image_url, caption=caption, reply_to=topic_id)
+                await client.send_file(entity=supergroup, file=image_url, caption=caption, reply_to=topic_id, silent=True)
                 return
             except IMAGE_URL_ERRORS:
                 report_warning(self.step, show.file_name, f"Telegram could not download the {description} from TMDB, default image sent")
         else:
             report_warning(self.step, show.file_name, f"No {description} in TMDB, default image sent")
-        await client.send_file(entity=supergroup, file=default_image, caption=caption, reply_to=topic_id)
+        await client.send_file(entity=supergroup, file=default_image, caption=caption, reply_to=topic_id, silent=True)
 
     async def _send_backdrop(self, client, supergroup, topic_id, show: Show):
         # Checked on every attempt, in case a previous one was sent but its response was lost
@@ -68,7 +67,7 @@ class ShowTelegramApiClient(TelegramApiClient):
         if not self._has_backdrop(messages):
             # The General poster goes first: if the backdrop then fails, the next run sends the poster again,
             # better than never sending it
-            topic_link = TOPIC_LINK_URL.format(group_id=supergroup.id, topic_id=topic_id)
+            topic_link = get_topic_link(supergroup, topic_id)
             await self._retry(show, lambda: self._send_image(client, supergroup, show, show.poster_path, DEFAULT_POSTER,
                                                              show.generate_telegram_caption(topic_link), "poster"))
             await self._retry(show, lambda: self._send_backdrop(client, supergroup, topic_id, show))

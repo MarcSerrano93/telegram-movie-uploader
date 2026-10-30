@@ -153,3 +153,23 @@ def test_everything_already_uploaded(telegram, make_show):
     assert len(topic.messages) == 2
     assert telegram.general == []
     assert show.status == FileStatus.UPLOADED
+
+def test_every_message_inside_the_topic_is_silent(telegram, make_show):
+    upload(telegram, make_show({1: 2}))
+
+    [topic] = telegram.topics.values()
+    assert all(message.silent for message in topic.messages)
+
+def test_default_images_inside_the_topic_are_silent(telegram, make_show):
+    show = make_show()
+    show.backdrop_path = show.seasons[1].poster_path = ""
+
+    upload(telegram, show)
+
+    [topic] = telegram.topics.values()
+    assert topic.messages[0].silent and topic.messages[1].silent
+
+def test_general_poster_of_a_show_is_silent(telegram, make_show):
+    upload(telegram, make_show())
+
+    assert telegram.general[0].silent

@@ -156,6 +156,13 @@ python src/main.py movies
 python src/main.py tv
 ```
 
+To upload only some of the source folder, add `--filter` with a text that the movie file name or the
+show folder name must contain, in any case. Everything else is ignored:
+
+```
+python src/main.py tv --filter "breaking"
+```
+
 `config.json`, `.env` and `uploader.session` are always read from the project root, so the
 script also works when started from another folder. If something is missing or wrong in `config.json`
 or `.env`, it stops before doing anything and says what, e.g. `Invalid config file: API_KEY is missing in .env`.
@@ -199,7 +206,8 @@ On Windows, the full path of each part must fit in 259 characters. If the destin
 file name and the TMDB title together are too long, the movie stops with a `Path too long` error.
 
 In Telegram, each movie has a topic named `Title (Year) {tmdb-112233}` with the poster message and
-one message with all the files (in albums of up to 10 files, Telegram's limit).
+one message with all the files (in albums of up to 10 files, Telegram's limit). The General topic gets
+the poster with a "¡Ir a la película!" link to the topic.
 
 ### Result in TV mode
 

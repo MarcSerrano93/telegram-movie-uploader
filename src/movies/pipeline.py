@@ -11,8 +11,8 @@ from movies.tmdb_api_client import MovieTmdbApiClient
 
 ITEM_LABEL = "movies"   # Shown in the summary: "Uploaded: X of Y movies"
 
-def read_items(config):
-    return FolderReader(config.source_files_path).read()
+def read_items(config, name_filter=""):
+    return FolderReader(config.source_files_path, name_filter).read()
 
 def create_stages(config, input_queue):
     """

@@ -10,6 +10,14 @@ from core.tmdb import parse_tmdb_id
 CAPTION_MAX_GENRES = 5
 INVALID_FILE_NAME_CHARS = r'[<>:"/\\|?*]'
 
+def make_general_caption(caption, topic_link):
+    """
+    Returns the text for the General topic from the text of a poster message in markdown:
+    every line in bold except the first one (the title, which has its own format), and a link to the topic.
+    """
+    title, *lines = f"{caption}\n\n👉 | [¡Ir a la película!]({topic_link})".split("\n")
+    return "\n".join([title, *(f"**{line}**" if line and "**" not in line else line for line in lines)])
+
 class Movie:
     def __init__(self, file_full_path):
         self.file_full_path = file_full_path
@@ -45,10 +53,11 @@ class Movie:
         """
         return f"{re.sub(INVALID_FILE_NAME_CHARS, '.', self.title)} ({self.year})"
 
-    def generate_telegram_poster_caption(self):
+    def generate_telegram_poster_caption(self, topic_link=None):
         """
         Returns the text of the poster message: titles, year, runtime, up to 5 genres as hashtags and the TMDB link.
         If the Spanish title already contains "(English title)", it is removed so it is not shown twice.
+        With topic_link, the text for the General topic (see make_general_caption).
         """
         regex = r"\(\s*" + re.escape(self.title_en) + r"\s*\)"
         title_es = re.sub(regex, "", self.title).rstrip()
@@ -58,7 +67,8 @@ class Movie:
         duration = f"⏱| {hours}h {minutes}m"
         tmdb_link = f"🌐 | [TMDB](https://www.themoviedb.org/movie/{self.tmdb_id})"
         genres = "".join(f"\n🎭| #{genre}" for genre in self.genres[:CAPTION_MAX_GENRES])
-        return f"{title}\n\n{year}\n{duration}{genres}\n\n{tmdb_link}"
+        caption = f"{title}\n\n{year}\n{duration}{genres}\n\n{tmdb_link}"
+        return make_general_caption(caption, topic_link) if topic_link else caption
 
     def __repr__(self):
         return (

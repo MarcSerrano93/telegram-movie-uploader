@@ -8,7 +8,7 @@ import shutil
 
 from core.constants import FileStatus
 from core.mkv_split import list_mkv_parts
-from core.telegram_api_client import TelegramApiClient
+from core.telegram_api_client import TelegramApiClient, get_topic_link
 from core.utils import PermanentError, report_warning, with_retries_async
 from movies.movie import Movie
 
@@ -30,9 +30,19 @@ class MovieTelegramApiClient(TelegramApiClient):
             return
         caption = movie.generate_telegram_poster_caption()
         if movie.poster_path:
-            await client.send_file(entity=supergroup, file=movie.poster_path, caption=caption, reply_to=topic_id)
+            await client.send_file(entity=supergroup, file=movie.poster_path, caption=caption, reply_to=topic_id, silent=True)
         else:
-            await client.send_message(entity=supergroup, message=caption, reply_to=topic_id)
+            await client.send_message(entity=supergroup, message=caption, reply_to=topic_id, silent=True)
+
+    async def _send_general_poster(self, client, supergroup, topic_id, movie: Movie):
+        """
+        Posts the poster in the General topic, silently, with a link to the topic of the movie.
+        """
+        caption = movie.generate_telegram_poster_caption(get_topic_link(supergroup, topic_id))
+        if movie.poster_path:
+            await client.send_file(entity=supergroup, file=movie.poster_path, caption=caption, silent=True)
+        else:
+            await client.send_message(entity=supergroup, message=caption, silent=True)
 
     def _get_whole_file(self, movie: Movie):
         if not os.path.isfile(movie.file_full_path):
@@ -80,8 +90,8 @@ class MovieTelegramApiClient(TelegramApiClient):
 
     async def _upload_to_group(self, client, supergroup, movie: Movie, folder, file_names, label):
         """
-        Fills the topic of the movie in one group: find or create it, send the poster and upload the files in albums
-        of up to 10. Whatever is already in the topic is skipped.
+        Fills the topic of the movie in one group: find or create it, send the poster (also to the General topic) and
+        upload the files in albums of up to 10. Whatever is already in the topic is skipped.
         """
         topic_id, created = await self._retry(movie, lambda: self._find_or_create_topic(client, supergroup, movie.title, movie.year, movie.tmdb_id))
         if created:
@@ -93,6 +103,9 @@ class MovieTelegramApiClient(TelegramApiClient):
         if not poster_sent:
             if not movie.poster_path:
                 report_warning(self.step, movie.file_name, "No poster in TMDB, info sent as text")
+            # The General poster goes first: if the topic poster then fails, the next run sends the General one
+            # again, better than never sending it
+            await self._retry(movie, lambda: self._send_general_poster(client, supergroup, topic_id, movie))
             await self._retry(movie, lambda: self._send_poster(client, supergroup, topic_id, movie))
 
         await self._upload_files(client, supergroup, topic_id, movie, label, folder, file_names, sent_files)

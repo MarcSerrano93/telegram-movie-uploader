@@ -46,11 +46,23 @@ def error_reasons():
     """
     return [(step.value, file_name, str(reason)) for step, file_name, reason in shared_state.errors]
 
+class FakePhoto(str):
+    """
+    A photo already in Telegram, named after its image.
+    """
+
+class FakeGroup(str):
+    """
+    A Telegram group: compares as its name, and has an id for the topic links.
+    """
+    id = 555
+
 class FakeTopic:
     def __init__(self, topic_id, title, group=None):
         self.id = topic_id
         self.title = title
         self.group = group      # None: visible from any group
+        self.top_message = topic_id
         self.messages = []
 
 class FakeUpdate:
@@ -80,7 +92,7 @@ class FakeTelegram:
     async def get_entity(self, group):
         if group in self.unknown_groups:
             raise ValueError(f"Cannot find {group}")
-        return group
+        return FakeGroup(group)
 
     async def __call__(self, request):
         self.request_count += 1
@@ -88,40 +100,54 @@ class FakeTelegram:
             raise self.request_errors.pop(0)
         if isinstance(request, GetForumTopicsRequest):
             # Like Telegram's search, it may also return topics that only look similar
-            return SimpleNamespace(topics=[topic for topic in self.topics.values() if topic.group in (None, request.peer)])
+            topics = [topic for topic in self.topics.values() if topic.group in (None, request.peer)]
+            # Like Telegram, a page starts after offset_topic, and the most recent topics come first
+            topics.sort(key=lambda topic: topic.id, reverse=True)
+            if request.offset_topic:
+                topics = [topic for topic in topics if topic.id < request.offset_topic]
+            topics = topics[:request.limit]
+            messages = [SimpleNamespace(id=topic.top_message, date=None) for topic in topics]
+            return SimpleNamespace(topics=topics, messages=messages)
         if isinstance(request, CreateForumTopicRequest):
             topic = self.add_topic(request.title, request.peer)
             return SimpleNamespace(updates=[FakeUpdate(topic.id)])
         raise NotImplementedError(request)
 
-    async def iter_messages(self, entity, reply_to):
-        for message in list(self.topics[reply_to].messages):
+    async def iter_messages(self, entity, reply_to, reverse=False, limit=None):
+        messages = self.general if reply_to == 1 else self.topics[reply_to].messages
+        for message in list(messages)[:limit]:
             yield message
 
-    async def send_message(self, entity, message, reply_to):
-        self.topics[reply_to].messages.append(self.text_message(message))
-
-    async def send_file(self, entity, file, reply_to=None, caption=None, force_document=False):
+    async def send_message(self, entity, message, reply_to=None, silent=False, link_preview=True):
         messages = self.topics[reply_to].messages if reply_to else self.general
-        if isinstance(file, str):   # Image: TMDB URL or local file
+        messages.append(self.text_message(message))
+        messages[-1].silent = silent
+
+    async def send_file(self, entity, file, reply_to=None, caption=None, force_document=False, silent=False):
+        messages = self.topics[reply_to].messages if reply_to else self.general
+        if isinstance(file, (str, FakePhoto)):   # Image: TMDB URL, local file or a photo already in Telegram
             if file in self.broken_image_urls:
                 raise WebpageMediaEmptyError(request=None)
             messages.append(self.photo_message(caption, file))
+            messages[-1].silent = silent
         else:
             files = file if isinstance(file, list) else [file]
             self.sent_albums.append([uploaded.name for uploaded in files])
             for uploaded in files:
                 messages.append(self.file_message(uploaded.name))
+                messages[-1].silent = silent
             if self.lost_album_responses:
                 self.lost_album_responses -= 1
                 raise ConnectionError("Response lost")
 
     def text_message(self, text):
-        return SimpleNamespace(photo=None, message=markdown.parse(text)[0], file=None)
+        plain_text, entities = markdown.parse(text)
+        return SimpleNamespace(photo=None, message=plain_text, text=text, entities=entities, file=None)
 
     def photo_message(self, caption, image="image.jpg"):
-        # Like Telegram, the text keeps no markdown: "**Bold**" arrives as "Bold"
-        return SimpleNamespace(photo=True, message=markdown.parse(caption or "")[0], file=None, image=image, caption=caption)
+        # Like Telegram, .message keeps no markdown: "**Bold**" arrives as "Bold". .text is the markdown version
+        plain_text, entities = markdown.parse(caption or "")
+        return SimpleNamespace(photo=FakePhoto(image), message=plain_text, text=caption or "", entities=entities, file=None, image=image, caption=caption)
 
     def file_message(self, name):
         return SimpleNamespace(photo=None, message="", file=SimpleNamespace(name=name))

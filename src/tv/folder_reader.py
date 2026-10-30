@@ -12,18 +12,19 @@ from tv.show import Show
 EPISODE_REGEX = re.compile(r"(\d+)x(\d+)\s-")    # "1x01 - Pilot.mkv": season 1, episode 1
 
 class ShowFolderReader:
-    def __init__(self, folder_path: str, telegram_size_limit_mb):
+    def __init__(self, folder_path: str, telegram_size_limit_mb, name_filter=""):
         self.folder_path = folder_path
         self.size_limit = telegram_size_limit_mb * 1024 * 1024
+        self.name_filter = name_filter.casefold()
 
     def read(self):
         """
-        Returns a Show for each subfolder. Shows without the {tmdb-<id>} tag, without episodes or with an episode
-        bigger than the Telegram limit are reported as READ errors and skipped.
+        Returns a Show for each subfolder with name_filter in its name, in any case. Shows without the {tmdb-<id>} tag,
+        without episodes or with an episode bigger than the Telegram limit are reported as READ errors and skipped.
         """
         shows = []
         for entry in sorted(os.scandir(self.folder_path), key=lambda entry: entry.name):
-            if entry.is_dir():
+            if entry.is_dir() and self.name_filter in entry.name.casefold():
                 show = self._read_show(entry)
                 if show:
                     shows.append(show)

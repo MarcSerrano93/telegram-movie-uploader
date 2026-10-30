@@ -51,6 +51,23 @@ def test_episode_bigger_than_the_limit_skips_the_whole_show(tmp_path):
     assert [show.tmdb_id for show in shows] == ["2"]
     assert error_reasons() == [("READ", "Big {tmdb-1}", "\"1x01 - A.mkv\" (2.0 MB) is bigger than the Telegram limit, show skipped")]
 
+def test_filter_only_reads_the_matching_folders_in_any_case(tmp_path):
+    make_folder(tmp_path, "Breaking Bad {tmdb-1}", ["1x01 - A.mkv"])
+    make_folder(tmp_path, "Other {tmdb-2}", ["1x01 - A.mkv"])
+
+    shows = ShowFolderReader(str(tmp_path), 4000, "BREAKING").read()
+
+    assert [show.tmdb_id for show in shows] == ["1"]
+
+def test_folders_outside_the_filter_report_nothing(tmp_path):
+    make_folder(tmp_path, "No tag", ["cover.jpg"])
+    make_folder(tmp_path, "Breaking Bad {tmdb-1}", ["1x01 - A.mkv"])
+
+    ShowFolderReader(str(tmp_path), 4000, "breaking").read()
+
+    assert error_reasons() == []
+    assert warning_reasons() == []
+
 def test_files_in_the_source_folder_are_ignored(tmp_path):
     (tmp_path / "1x01 - Loose.mkv").write_bytes(b"x")
     make_folder(tmp_path, "Show {tmdb-1}", ["1x01 - A.mkv"])

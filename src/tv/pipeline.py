@@ -9,8 +9,8 @@ from tv.tmdb_api_client import ShowTmdbApiClient
 
 ITEM_LABEL = "TV shows"   # Shown in the summary: "Uploaded: X of Y TV shows"
 
-def read_items(config):
-    return ShowFolderReader(config.source_files_path, config.telegram_size_limit_mb).read()
+def read_items(config, name_filter=""):
+    return ShowFolderReader(config.source_files_path, config.telegram_size_limit_mb, name_filter).read()
 
 def create_stages(config, input_queue):
     """

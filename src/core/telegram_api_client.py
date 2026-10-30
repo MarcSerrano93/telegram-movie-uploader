@@ -26,11 +26,15 @@ TOPIC_TITLE_MAX_LENGTH = 128
 ALBUM_MAX_FILES = 10                            # Telegram limit of files per album
 PROGRESS_STEP_PERCENT = 10
 PERMANENT_TELEGRAM_ERRORS = (ForbiddenError,)   # No rights to create topics or post: retrying won't help
+TOPIC_LINK_URL = "https://t.me/c/{group_id}/{topic_id}"
 
 telethon.errors.rpc_errors_re += (("FLOOD_PREMIUM_WAIT_(\\d+)", telethon.errors.FloodWaitError),)
 # Telethon warns about problems it handles itself (e.g. FastTelethon closing its extra connections after each file).
 # What it cannot handle is raised as an exception, which our retries and the summary report
 logging.getLogger("telethon").setLevel(logging.ERROR)
+
+def get_topic_link(supergroup, topic_id):
+    return TOPIC_LINK_URL.format(group_id=supergroup.id, topic_id=topic_id)
 
 class TelegramApiClient(PipelineStage):
     step = Step.UPLOAD
@@ -130,7 +134,7 @@ class TelegramApiClient(PipelineStage):
             return
         # A single file (small movie, or the last part alone) goes as a normal document, not as an album of one
         files = uploaded_files[0] if len(uploaded_files) == 1 else uploaded_files
-        await client.send_file(entity=supergroup, file=files, force_document=True, reply_to=topic_id)
+        await client.send_file(entity=supergroup, file=files, force_document=True, reply_to=topic_id, silent=True)
 
     async def _upload_files(self, client, supergroup, topic_id, item, label, folder, file_names, sent_files):
         """

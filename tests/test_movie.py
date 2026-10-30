@@ -37,3 +37,22 @@ def test_caption_starts_like_telegram_client_expects():
     # MovieTelegramApiClient detects an already sent text poster by this start
     from movies.telegram_api_client import POSTER_CAPTION_START
     assert make_caption("Matrix", "The Matrix").startswith(POSTER_CAPTION_START)
+
+def test_general_caption_is_bold_except_the_title():
+    movie = Movie("Movie {tmdb-603}.mkv")
+    movie.set_movie_metadata("Matrix", "The Matrix", "1999", ["Acción"], 136, "")
+
+    assert movie.generate_telegram_poster_caption("https://t.me/c/1/2") == (
+        "🎬| **Matrix** __(The Matrix)__\n"
+        "\n"
+        "**📆| 1999**\n"
+        "**⏱| 2h 16m**\n"
+        "**🎭| #Acción**\n"
+        "\n"
+        "**🌐 | [TMDB](https://www.themoviedb.org/movie/603)**\n"
+        "\n"
+        "**👉 | [¡Ir a la película!](https://t.me/c/1/2)**"
+    )
+
+def test_topic_caption_stays_without_bold():
+    assert "**📆" not in make_caption("Matrix", "The Matrix")
